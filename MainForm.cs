@@ -66,6 +66,9 @@ public class MainForm : Form
     readonly DataGridView grid = new();
     readonly Label status = new();
     readonly Label hotkeyStatus = new();
+    readonly Panel notificationPanel = new();
+    readonly Label notificationLabel = new();
+    readonly Button clearNotificationButton = new();
     readonly Button scanButton = new();
     readonly NumericUpDown reloadWaitBox = new();
     readonly NumericUpDown scanIntervalBox = new();
@@ -142,7 +145,7 @@ public class MainForm : Form
     public MainForm()
     {
         Text = "Otobot - Hata Ekranı Algılama";
-        Width = 1250; Height = 700; StartPosition = FormStartPosition.CenterScreen;
+        Width = 1250; Height = 760; StartPosition = FormStartPosition.CenterScreen;
         var applicationIcon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (applicationIcon != null) Icon = applicationIcon;
 
@@ -426,7 +429,11 @@ public class MainForm : Form
             checkUpdateButton.Enabled = false;
             try
             {
-                await UpdateService.CheckForUpdatesAsync(this, true, message => status.Text = message);
+                await UpdateService.CheckForUpdatesAsync(
+                    this,
+                    true,
+                    message => status.Text = message,
+                    ShowWarning);
             }
             finally
             {
@@ -439,7 +446,31 @@ public class MainForm : Form
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(windowsPage);
         tabs.TabPages.Add(settingsPage);
+
+        notificationPanel.Dock = DockStyle.Bottom;
+        notificationPanel.Height = 68;
+        notificationPanel.Padding = new Padding(10, 8, 8, 8);
+        notificationPanel.BorderStyle = BorderStyle.FixedSingle;
+        notificationPanel.BackColor = Color.WhiteSmoke;
+
+        notificationLabel.Dock = DockStyle.Fill;
+        notificationLabel.Text = "Uyarı yok.";
+        notificationLabel.ForeColor = Color.DimGray;
+        notificationLabel.Font = new Font(Font.FontFamily, 9, FontStyle.Bold);
+        notificationLabel.TextAlign = ContentAlignment.MiddleLeft;
+        notificationLabel.AutoEllipsis = true;
+        notificationLabel.UseMnemonic = false;
+        notificationLabel.Padding = new Padding(4, 0, 8, 0);
+
+        clearNotificationButton.Dock = DockStyle.Right;
+        clearNotificationButton.Width = 82;
+        clearNotificationButton.Text = "TEMİZLE";
+        clearNotificationButton.Click += (_, _) => ClearNotification();
+
+        notificationPanel.Controls.Add(notificationLabel);
+        notificationPanel.Controls.Add(clearNotificationButton);
         Controls.Add(tabs);
+        Controls.Add(notificationPanel);
 
         Shown += async (_, _) =>
         {
@@ -448,7 +479,11 @@ public class MainForm : Form
             LoadRefreshTemplate();
             LoadActionTemplates();
             ScanWindows();
-            await UpdateService.CheckForUpdatesAsync(this, false, message => status.Text = message);
+            await UpdateService.CheckForUpdatesAsync(
+                this,
+                false,
+                message => status.Text = message,
+                ShowWarning);
         };
         FormClosed += (_, _) =>
         {
@@ -456,6 +491,34 @@ public class MainForm : Form
             refreshButtonTemplate?.Dispose();
             DisposeActionTemplates();
         };
+    }
+
+    void ShowWarning(string message) => ShowNotification(message, true);
+
+    void ShowInfo(string message) => ShowNotification(message, false);
+
+    void ShowNotification(string message, bool isWarning)
+    {
+        if (IsDisposed) return;
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => ShowNotification(message, isWarning));
+            return;
+        }
+
+        string normalized = message.Replace("\r\n", "\n").Trim();
+        notificationLabel.Text =
+            $"{(isWarning ? "UYARI" : "BİLGİ")} [{DateTime.Now:HH:mm:ss}]  {normalized}";
+        notificationLabel.ForeColor = isWarning ? Color.DarkRed : Color.DarkGreen;
+        notificationPanel.BackColor = isWarning ? Color.MistyRose : Color.Honeydew;
+        notificationPanel.BringToFront();
+    }
+
+    void ClearNotification()
+    {
+        notificationLabel.Text = "Uyarı yok.";
+        notificationLabel.ForeColor = Color.DimGray;
+        notificationPanel.BackColor = Color.WhiteSmoke;
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -687,7 +750,7 @@ public class MainForm : Form
             ScanWindows();
             if (windows.Count == 0)
             {
-                MessageBox.Show("Önce Chrome pencerelerini tarayın.");
+                ShowWarning("Önce Chrome pencerelerini tarayın.");
                 return;
             }
         }
@@ -797,7 +860,7 @@ public class MainForm : Form
         closeButtonTemplate?.Dispose();
         closeButtonTemplate = LoadEmbeddedTemplate(EmbeddedTemplates.CloseButton);
         if (closeButtonTemplate == null)
-            MessageBox.Show("Gömülü KAPAT butonu şablonu yüklenemedi.");
+            ShowWarning("Gömülü KAPAT butonu şablonu yüklenemedi.");
     }
 
     static Mat? LoadEmbeddedTemplate(byte[] data)
@@ -1044,12 +1107,12 @@ public class MainForm : Form
     {
         if (!useVisualActions)
         {
-            MessageBox.Show("Yenileme görseli kaydetmek için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
+            ShowWarning("Yenileme görseli kaydetmek için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
             return;
         }
         if (scanCts != null)
         {
-            MessageBox.Show("Yenileme görselini kaydetmeden önce çalışan taramayı F11 ile durdurun.");
+            ShowWarning("Yenileme görselini kaydetmeden önce çalışan taramayı F11 ile durdurun.");
             return;
         }
         if (windows.Count == 0)
@@ -1057,7 +1120,7 @@ public class MainForm : Form
             ScanWindows();
             if (windows.Count == 0)
             {
-                MessageBox.Show("Önce en az bir Chrome penceresi açın.");
+                ShowWarning("Önce en az bir Chrome penceresi açın.");
                 return;
             }
         }
@@ -1074,14 +1137,14 @@ public class MainForm : Form
     {
         if (!TryFindWindowAt(screenX, screenY, out var targetWindow))
         {
-            MessageBox.Show("Tıklanan nokta taranmış bir Chrome penceresinin içinde değil.");
+            ShowWarning("Tıklanan nokta taranmış bir Chrome penceresinin içinde değil.");
             status.Text = "Yenileme görseli kaydedilemedi.";
             return;
         }
 
         if (screenY >= targetWindow.Y + Math.Min(RefreshSearchHeight, targetWindow.Height))
         {
-            MessageBox.Show("Yenileme simgesini Chrome penceresinin üst araç çubuğundan seçin.");
+            ShowWarning("Yenileme simgesini Chrome penceresinin üst araç çubuğundan seçin.");
             status.Text = "Yenileme görseli kaydedilemedi.";
             return;
         }
@@ -1118,7 +1181,7 @@ public class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Yenileme görseli kaydedilemedi:\n" + ex.Message);
+            ShowWarning("Yenileme görseli kaydedilemedi:\n" + ex.Message);
             status.Text = "Yenileme görseli kaydedilemedi.";
         }
     }
@@ -1182,7 +1245,7 @@ public class MainForm : Form
         if (actionNumber < 1 || actionNumber > 3) return;
         if (scanCts != null)
         {
-            MessageBox.Show("Görsel kaydetmeden önce çalışan taramayı F11 ile durdurun.");
+            ShowWarning("Görsel kaydetmeden önce çalışan taramayı F11 ile durdurun.");
             return;
         }
         if (windows.Count == 0)
@@ -1190,7 +1253,7 @@ public class MainForm : Form
             ScanWindows();
             if (windows.Count == 0)
             {
-                MessageBox.Show("Önce en az bir Chrome penceresi açın.");
+                ShowWarning("Önce en az bir Chrome penceresi açın.");
                 return;
             }
         }
@@ -1210,7 +1273,7 @@ public class MainForm : Form
         if (actionNumber < 1 || actionNumber > 3) return;
         if (scanCts != null)
         {
-            MessageBox.Show("Koordinat kaydetmeden önce çalışan taramayı F11 ile durdurun.");
+            ShowWarning("Koordinat kaydetmeden önce çalışan taramayı F11 ile durdurun.");
             return;
         }
         if (!TryGetSelectedWindow(out _, out int index)) return;
@@ -1240,7 +1303,7 @@ public class MainForm : Form
         if (screenX < w.X || screenX >= w.X + w.Width ||
             screenY < w.Y || screenY >= w.Y + w.Height)
         {
-            MessageBox.Show("Tıklanan nokta seçili Chrome penceresinin içinde değil.");
+            ShowWarning("Tıklanan nokta seçili Chrome penceresinin içinde değil.");
             status.Text = $"İşlem {actionNumber} koordinatı kaydedilemedi.";
             return;
         }
@@ -1276,7 +1339,7 @@ public class MainForm : Form
 
         if (!TryFindWindowAt(screenX, screenY, out var targetWindow))
         {
-            MessageBox.Show("Tıklanan nokta taranmış bir Chrome penceresinin içinde değil.");
+            ShowWarning("Tıklanan nokta taranmış bir Chrome penceresinin içinde değil.");
             status.Text = $"İşlem {actionNumber} görseli kaydedilemedi.";
             return;
         }
@@ -1313,7 +1376,7 @@ public class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show("İşlem görseli kaydedilemedi:\n" + ex.Message);
+            ShowWarning("İşlem görseli kaydedilemedi:\n" + ex.Message);
             status.Text = $"İşlem {actionNumber} görseli kaydedilemedi.";
         }
     }
@@ -1321,7 +1384,7 @@ public class MainForm : Form
     bool TryGetSelectedWindow(out ChromeWindow w, out int index)
     {
         index=grid.CurrentRow?.Index ?? -1;
-        if(index<0 || index>=windows.Count){w=null!; MessageBox.Show("Önce tabloda bir pencere seçin."); return false;}
+        if(index<0 || index>=windows.Count){w=null!; ShowWarning("Önce tabloda bir pencere seçin."); return false;}
         w=windows[index]; return true;
     }
 
@@ -1418,20 +1481,20 @@ public class MainForm : Form
 
             if (string.IsNullOrWhiteSpace(oldDomain) || string.IsNullOrWhiteSpace(newDomain))
             {
-                MessageBox.Show("Eski ve yeni domain alanlarını doldurun.");
+                ShowWarning("Eski ve yeni domain alanlarını doldurun.");
                 return;
             }
 
             if (string.Equals(oldDomain, newDomain, StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show("Eski ve yeni domain aynı.");
+                ShowWarning("Eski ve yeni domain aynı.");
                 return;
             }
 
             ScanWindows();
             if (windows.Count == 0)
             {
-                MessageBox.Show("Açık Chrome penceresi bulunamadı.");
+                ShowWarning("Açık Chrome penceresi bulunamadı.");
                 return;
             }
 
@@ -1533,11 +1596,14 @@ public class MainForm : Form
             if (failed.Count > 0)
                 message += $"\n\nİşlem sırasında erişilemeyen pencereler: {string.Join(", ", failed)}";
 
-            MessageBox.Show(message);
+            if (failed.Count > 0)
+                ShowWarning(message);
+            else
+                ShowInfo(message);
         }
         catch (Exception ex)
         {
-            MessageBox.Show("URL'ler güncellenemedi:\n" + ex.Message);
+            ShowWarning("URL'ler güncellenemedi:\n" + ex.Message);
         }
         finally
         {
@@ -1552,7 +1618,7 @@ public class MainForm : Form
         {
             if (windows.Count == 0)
             {
-                MessageBox.Show("Önce Chrome Pencerelerini Tara ile pencereleri listeleyin.");
+                ShowWarning("Önce Chrome Pencerelerini Tara ile pencereleri listeleyin.");
                 return;
             }
 
@@ -1590,7 +1656,7 @@ public class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Oturum kaydedilemedi:\n" + ex.Message);
+            ShowWarning("Oturum kaydedilemedi:\n" + ex.Message);
         }
         finally
         {
@@ -1610,7 +1676,7 @@ public class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Oturum dosyası okunamadı:\n" + ex.Message);
+            ShowWarning("Oturum dosyası okunamadı:\n" + ex.Message);
             return new List<SessionRecord>();
         }
     }
@@ -1621,14 +1687,14 @@ public class MainForm : Form
         int index = grid.CurrentRow?.Index ?? -1;
         if (index < 0 || index >= records.Count)
         {
-            MessageBox.Show("Önce geri yüklemek istediğiniz kayıtlı pencereyi tabloda seçin.");
+            ShowWarning("Önce geri yüklemek istediğiniz kayıtlı pencereyi tabloda seçin.");
             return;
         }
 
         var record = records[index];
         if (string.IsNullOrWhiteSpace(record.Url))
         {
-            MessageBox.Show("Bu pencerenin kayıtlı URL'si boş. Pencereyi tekrar açıp Pencereleri Kaydet yapın.");
+            ShowWarning("Bu pencerenin kayıtlı URL'si boş. Pencereyi tekrar açıp Pencereleri Kaydet yapın.");
             return;
         }
 
@@ -1641,7 +1707,7 @@ public class MainForm : Form
         var records = LoadSessionRecords();
         if (records.Count == 0)
         {
-            MessageBox.Show("Kayıtlı oturum bulunamadı. Önce PENCERELERİ KAYDET butonuna basın.");
+            ShowWarning("Kayıtlı oturum bulunamadı. Önce PENCERELERİ KAYDET butonuna basın.");
             return;
         }
 
@@ -1688,7 +1754,7 @@ public class MainForm : Form
         string? chromeExe = FindChromeExe();
         if (chromeExe == null)
         {
-            MessageBox.Show("Chrome.exe bulunamadı.");
+            ShowWarning("Chrome.exe bulunamadı.");
             return;
         }
 
@@ -1720,7 +1786,7 @@ public class MainForm : Form
 
         if (newHandle == IntPtr.Zero)
         {
-            MessageBox.Show($"Pencere {record.WindowNo} açılamadı veya yeni Chrome penceresi bulunamadı.");
+            ShowWarning($"Pencere {record.WindowNo} açılamadı veya yeni Chrome penceresi bulunamadı.");
             return;
         }
 
@@ -1777,7 +1843,7 @@ public class MainForm : Form
             File.WriteAllText(coordFile,JsonSerializer.Serialize(data,new JsonSerializerOptions{WriteIndented=true}));
             status.Text="Taşınabilir koordinatlar kaydedildi.";
         }
-        catch(Exception ex){MessageBox.Show("Koordinatlar kaydedilemedi:\n"+ex.Message);}
+        catch(Exception ex){ShowWarning("Koordinatlar kaydedilemedi:\n"+ex.Message);}
     }
 
     void LoadCoordinates()
@@ -1981,7 +2047,7 @@ public class MainForm : Form
         if (useVisualActions)
         {
             if (refreshButtonTemplate != null) return true;
-            MessageBox.Show("Önce Yenileme Görselini Kaydet düğmesiyle yenileme simgesini kaydedin.");
+            ShowWarning("Önce Yenileme Görselini Kaydet düğmesiyle yenileme simgesini kaydedin.");
             return false;
         }
 
@@ -1989,7 +2055,7 @@ public class MainForm : Form
         var missing = windows.Select((w, index) => new { w, index })
             .Where(item => !item.w.RefreshRX.HasValue || !item.w.RefreshRY.HasValue)
             .Select(item => item.index + 1);
-        MessageBox.Show(
+        ShowWarning(
             "Yenileme koordinatı eksik olan pencereler: " + string.Join(", ", missing));
         return false;
     }
@@ -2005,12 +2071,12 @@ public class MainForm : Form
     {
         if (!useVisualActions)
         {
-            MessageBox.Show("Görsel testi için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
+            ShowWarning("Görsel testi için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
             return;
         }
         if (refreshButtonTemplate == null)
         {
-            MessageBox.Show("Önce yenileme görselini kaydedin.");
+            ShowWarning("Önce yenileme görselini kaydedin.");
             return;
         }
         if (!TryGetSelectedWindow(out var w, out _)) return;
@@ -2038,17 +2104,15 @@ public class MainForm : Form
                 (double)refreshTemplateThresholdBox.Value,
                 RefreshSearchHeight);
 
-            MessageBox.Show(
+            ShowInfo(
+                "Yenileme görseli testi — " +
                 $"Yenileme: {(match.Found ? "BULUNDU" : "bulunamadı")} — {match.Score:P1}" +
-                $"\n\nKullanılan eşik: {refreshTemplateThresholdBox.Value:P0}" +
-                "\nTest sırasında tıklama yapılmadı.",
-                "Yenileme görseli testi",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+                $" | Eşik: {refreshTemplateThresholdBox.Value:P0}" +
+                " | Test sırasında tıklama yapılmadı.");
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Yenileme görseli test edilemedi:\n" + ex.Message);
+            ShowWarning("Yenileme görseli test edilemedi:\n" + ex.Message);
         }
         finally
         {
@@ -2060,14 +2124,14 @@ public class MainForm : Form
     {
         if (!useVisualActions)
         {
-            MessageBox.Show("Görsel testi için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
+            ShowWarning("Görsel testi için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
             return;
         }
         if (!ActionTemplatesReady())
         {
             var missing = Enumerable.Range(1, 3)
                 .Where(number => actionButtonTemplates[number - 1] == null);
-            MessageBox.Show(
+            ShowWarning(
                 "Önce eksik işlem görsellerini kaydedin: " + string.Join(", ", missing));
             return;
         }
@@ -2101,16 +2165,14 @@ public class MainForm : Form
                     $"İşlem {i + 1}: {(match.Found ? "BULUNDU" : "bulunamadı")} — {match.Score:P1}");
             }
 
-            MessageBox.Show(
-                string.Join(Environment.NewLine, results) +
-                $"\n\nKullanılan eşik: {actionTemplateThresholdBox.Value:P0}\nTest sırasında tıklama yapılmadı.",
-                "İşlem görselleri testi",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+            ShowInfo(
+                "İşlem görselleri testi — " + string.Join(" | ", results) +
+                $" | Eşik: {actionTemplateThresholdBox.Value:P0}" +
+                " | Test sırasında tıklama yapılmadı.");
         }
         catch (Exception ex)
         {
-            MessageBox.Show("Görseller test edilemedi:\n" + ex.Message);
+            ShowWarning("Görseller test edilemedi:\n" + ex.Message);
         }
         finally
         {
@@ -2121,13 +2183,13 @@ public class MainForm : Form
     void StartContinuousScan()
     {
         if (scanCts != null) { status.Text = "Zaten çalışıyor. F11 ile durdurun."; return; }
-        ScanWindows(); if (windows.Count == 0) { MessageBox.Show("Chrome penceresi bulunamadı."); return; }
+        ScanWindows(); if (windows.Count == 0) { ShowWarning("Chrome penceresi bulunamadı."); return; }
         if (!EnsureRefreshMethodReady()) return;
         if (useVisualActions && !ActionTemplatesReady())
         {
             var missing = Enumerable.Range(1, 3)
                 .Where(number => actionButtonTemplates[number - 1] == null);
-            MessageBox.Show(
+            ShowWarning(
                 "Önce eksik işlem görsellerini kaydedin: " + string.Join(", ", missing));
             return;
         }
@@ -2139,7 +2201,7 @@ public class MainForm : Form
                     !item.w.Click2RX.HasValue || !item.w.Click2RY.HasValue ||
                     !item.w.Click3RX.HasValue || !item.w.Click3RY.HasValue)
                 .Select(item => item.index + 1);
-            MessageBox.Show(
+            ShowWarning(
                 "Üç işlem koordinatı eksik olan pencereler: " + string.Join(", ", missing));
             return;
         }
@@ -2358,6 +2420,9 @@ public class MainForm : Form
             {
                 token.ThrowIfCancellationRequested();
 
+                try
+                {
+
                 // 1) Önce tüm 11 pencereyi tara ve sadece hatalıları belirle.
                 status.Text = "Hata taraması yapılıyor...";
                 DetectErrors();
@@ -2415,6 +2480,20 @@ public class MainForm : Form
                     status.Text = $"Hata bulunmadı. {scanIntervalSeconds} saniye bekleniyor...";
                 }
 
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    status.Text =
+                        $"Tarama hatası: {ex.Message} — {scanIntervalSeconds} saniye sonra yeniden denenecek.";
+                    ShowWarning(
+                        "Tarama sırasında hata oluştu; tarama durdurulmadı ve sonraki döngüde yeniden denenecek:\n" +
+                        ex.Message);
+                }
+
                 // 4) Bir sonraki taramadan önce sistemin toparlanması için 60 sn.
                 await Task.Delay(scanIntervalSeconds * 1000, token);
             }
@@ -2422,11 +2501,6 @@ public class MainForm : Form
         catch (OperationCanceledException)
         {
             status.Text = "Tarama F11 ile durduruldu.";
-        }
-        catch (Exception ex)
-        {
-            status.Text = "Tarama hatası: " + ex.Message;
-            MessageBox.Show("Tarama sırasında hata oluştu:\n\n" + ex.Message);
         }
         finally
         {
@@ -2445,7 +2519,7 @@ public class MainForm : Form
             for (int i = 0; i < windows.Count; i++) { await ClickRefreshAsync(windows[i], CancellationToken.None); UpdateRow(i, "YENİLENİYOR...", 0, Color.Khaki); await Task.Delay(300); }
             status.Text = $"Tüm sayfalar yenilendi. {pageReloadWaitSeconds} saniye bekleniyor..."; await Task.Delay(pageReloadWaitSeconds * 1000); DetectErrors();
         }
-        catch (Exception ex) { MessageBox.Show("Yenileme hatası:\n" + ex.Message); }
+        catch (Exception ex) { ShowWarning("Yenileme hatası:\n" + ex.Message); }
     }
 
     async Task RefreshDetectedErrorsAsync()
@@ -2459,7 +2533,7 @@ public class MainForm : Form
             foreach (int i in errors) { await ClickRefreshAsync(windows[i], CancellationToken.None); UpdateRow(i, "YENİLENİYOR...", 0, Color.Khaki); await Task.Delay(300); }
             await Task.Delay(pageReloadWaitSeconds * 1000); DetectErrors();
         }
-        catch (Exception ex) { MessageBox.Show("Yenileme hatası:\n" + ex.Message); }
+        catch (Exception ex) { ShowWarning("Yenileme hatası:\n" + ex.Message); }
     }
 
     static Bitmap CaptureScreenArea(int x, int y, int width, int height)

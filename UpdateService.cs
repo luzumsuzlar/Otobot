@@ -11,12 +11,13 @@ internal static class UpdateService
     public static async Task CheckForUpdatesAsync(
         IWin32Window owner,
         bool showNoUpdateMessage,
-        Action<string>? reportStatus = null)
+        Action<string>? reportStatus = null,
+        Action<string>? reportWarning = null)
     {
         if (!await CheckGate.WaitAsync(0))
         {
             if (showNoUpdateMessage)
-                MessageBox.Show(owner, "Bir güncelleme denetimi zaten çalışıyor.", "Otobot");
+                reportWarning?.Invoke("Bir güncelleme denetimi zaten çalışıyor.");
             return;
         }
 
@@ -28,12 +29,8 @@ internal static class UpdateService
             if (!manager.IsInstalled)
             {
                 if (showNoUpdateMessage)
-                {
-                    MessageBox.Show(
-                        owner,
-                        "Otomatik güncelleme yalnızca Otobot Setup ile kurulan sürümde çalışır.",
-                        "Otobot");
-                }
+                    reportWarning?.Invoke(
+                        "Otomatik güncelleme yalnızca Otobot Setup ile kurulan sürümde çalışır.");
                 return;
             }
 
@@ -43,8 +40,6 @@ internal static class UpdateService
             if (update == null)
             {
                 reportStatus?.Invoke("Otobot güncel.");
-                if (showNoUpdateMessage)
-                    MessageBox.Show(owner, "En güncel sürümü kullanıyorsunuz.", "Otobot");
                 return;
             }
 
@@ -72,14 +67,7 @@ internal static class UpdateService
         {
             reportStatus?.Invoke("Güncelleme denetlenemedi.");
             if (showNoUpdateMessage)
-            {
-                MessageBox.Show(
-                    owner,
-                    "Güncelleme denetlenemedi:\n" + ex.Message,
-                    "Otobot",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-            }
+                reportWarning?.Invoke("Güncelleme denetlenemedi:\n" + ex.Message);
         }
         finally
         {

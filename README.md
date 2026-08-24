@@ -33,8 +33,18 @@ kullanılan mod program kapatılıp açılsa da korunur.
    `İşlem görselleri eşik değeri` ayarlarını düzenleyin.
 
 Görseller `%LOCALAPPDATA%\Otobot` içinde saklanır. Bir görsel bulunamazsa güvenlik
-için tıklama yapılmaz ve tarama açıklayıcı bir hatayla durur. Yenileme görseli
-yalnızca Chrome penceresinin üst araç çubuğunda aranır.
+için tıklama yapılmaz. Uyarı, formun altındaki kırmızı bildirim alanında gösterilir;
+modal pencere açılmaz ve otomatik tarama ayarlanan bekleme süresinden sonra sonraki
+döngüyle devam eder. Yenileme görseli yalnızca Chrome penceresinin üst araç
+çubuğunda aranır.
+
+### Engellemeyen uyarılar
+
+v4.18.4 ile hata ve uyarılar `MessageBox` yerine formun altındaki sabit bildirim
+alanında kırmızı olarak gösterilir. Bu alan programın çalışmasını veya düğmelerin
+kullanılmasını engellemez ve `TEMİZLE` düğmesiyle sıfırlanabilir. Görsel test
+sonuçları da aynı alanda bilgi mesajı olarak gösterilir. Yalnızca bir güncellemeyi
+indirip kurmak gibi kullanıcı onayı gerektiren işlemler soru penceresi açar.
 
 ### %33 sayfa yakınlaştırması
 
