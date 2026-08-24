@@ -83,6 +83,7 @@ public class MainForm : Form
     readonly Button restoreSelectedButton = new();
     readonly Button restoreAllButton = new();
     readonly NumericUpDown thresholdBox = new();
+    readonly NumericUpDown actionTemplateThresholdBox = new();
     readonly TextBox oldDomainBox = new();
     readonly TextBox newDomainBox = new();
     readonly Button replaceDomainButton = new();
@@ -92,6 +93,11 @@ public class MainForm : Form
     readonly string coordFile = AppDataPaths.GetDataFilePath("refresh_coordinates.json");
     readonly string sessionFile = AppDataPaths.GetDataFilePath("chrome_session.json");
     Mat? closeButtonTemplate;
+    readonly Mat?[] actionButtonTemplates = new Mat?[3];
+    VisualTemplateDefinition[] actionTemplateDefinitions =
+    [
+        new(), new(), new()
+    ];
     CancellationTokenSource? scanCts;
     int pageReloadWaitSeconds = 30;
     int scanIntervalSeconds = 60;
@@ -107,14 +113,17 @@ public class MainForm : Form
     bool suppressFirstAutoMouseUp = false;
 
     int autoCoordinateRow = 0;
-    int autoCaptureStep = 0; // 0=yenileme, 1=işlem1, 2=işlem2, 3=işlem3
-    int pendingSpecificClickNumber = 0;
-    bool suppressSpecificMouseDown = false;
+    int pendingActionTemplateNumber = 0;
+    bool suppressTemplateCaptureMouseDown = false;
+
+    const int ActionTemplateWidth = 160;
+    const int ActionTemplateHeight = 70;
 
     readonly Button autoCoordinateButton = new();
     readonly Button captureClick1Button = new();
     readonly Button captureClick2Button = new();
     readonly Button captureClick3Button = new();
+    readonly Button testActionVisualsButton = new();
 
     public MainForm()
     {
@@ -138,9 +147,9 @@ public class MainForm : Form
         captureCoordButton.Text = "Mouse Konumunu Ata (F8)"; captureCoordButton.AutoSize = true; captureCoordButton.Click += (_, _) => CaptureCurrentMousePosition();
         saveCoordButton.Text = "Koordinatları Kaydet"; saveCoordButton.AutoSize = true; saveCoordButton.Click += (_, _) => SaveCoordinates();
 
-        captureClickButton.Text = "İşlem Koordinatı Kaydet (F9)";
+        captureClickButton.Text = "Sıradaki İşlem Görselini Kaydet (F9)";
         captureClickButton.AutoSize = true;
-        captureClickButton.Click += (_, _) => CaptureClickCoordinate();
+        captureClickButton.Click += (_, _) => BeginCaptureActionTemplate(selectedClickNumber);
 
         saveSessionButton.Text = "PENCERELERİ KAYDET";
         saveSessionButton.AutoSize = true;
@@ -161,7 +170,15 @@ public class MainForm : Form
         thresholdBox.Value = .80m;
         thresholdBox.Width = 75;
 
-        hotkeyStatus.Text = "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem";
+        actionTemplateThresholdBox.DecimalPlaces = 2;
+        actionTemplateThresholdBox.Minimum = .50m;
+        actionTemplateThresholdBox.Maximum = .99m;
+        actionTemplateThresholdBox.Increment = .01m;
+        actionTemplateThresholdBox.Value = .82m;
+        actionTemplateThresholdBox.Width = 75;
+        actionTemplateThresholdBox.ValueChanged += (_, _) => SaveTimingSettings();
+
+        hotkeyStatus.Text = "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem görseli";
         hotkeyStatus.AutoSize = true;
         hotkeyStatus.Padding = new Padding(8, 8, 0, 0);
 
@@ -194,27 +211,31 @@ public class MainForm : Form
 
         captureCoordButton.Text = "Yenileme Koordinatı (F8)";
         captureCoordButton.AutoSize = true;
-        captureClickButton.Text = "İşlem Koordinatı (F9)";
+        captureClickButton.Text = "Sıradaki İşlem Görselini Kaydet (F9)";
         captureClickButton.AutoSize = true;
-        saveCoordButton.Text = "Koordinatları Kaydet";
+        saveCoordButton.Text = "Yenileme Koordinatlarını Kaydet";
         saveCoordButton.AutoSize = true;
 
-        autoCoordinateButton.Text = "⚡ OTOMATİK KOORDİNAT TOPLA";
+        autoCoordinateButton.Text = "⚡ YENİLEME NOKTALARINI TOPLA";
         autoCoordinateButton.AutoSize = true;
         autoCoordinateButton.Font = new Font(Font.FontFamily, 9, FontStyle.Bold);
         autoCoordinateButton.Click += (_, _) => StartAutoCoordinateCapture();
 
-        captureClick1Button.Text = "İşlem 1 Koordinatı";
+        captureClick1Button.Text = "İşlem 1 Görselini Kaydet";
         captureClick1Button.AutoSize = true;
-        captureClick1Button.Click += (_, _) => CaptureSpecificClickCoordinate(1);
+        captureClick1Button.Click += (_, _) => BeginCaptureActionTemplate(1);
 
-        captureClick2Button.Text = "İşlem 2 Koordinatı";
+        captureClick2Button.Text = "İşlem 2 Görselini Kaydet";
         captureClick2Button.AutoSize = true;
-        captureClick2Button.Click += (_, _) => CaptureSpecificClickCoordinate(2);
+        captureClick2Button.Click += (_, _) => BeginCaptureActionTemplate(2);
 
-        captureClick3Button.Text = "İşlem 3 Koordinatı";
+        captureClick3Button.Text = "İşlem 3 Görselini Kaydet";
         captureClick3Button.AutoSize = true;
-        captureClick3Button.Click += (_, _) => CaptureSpecificClickCoordinate(3);
+        captureClick3Button.Click += (_, _) => BeginCaptureActionTemplate(3);
+
+        testActionVisualsButton.Text = "İŞLEM GÖRSELLERİNİ TEST ET";
+        testActionVisualsButton.AutoSize = true;
+        testActionVisualsButton.Click += async (_, _) => await TestActionTemplatesAsync();
 
         saveSessionButton.Text = "PENCERELERİ KAYDET";
         saveSessionButton.AutoSize = true;
@@ -229,13 +250,14 @@ public class MainForm : Form
             startButton, stopButton, scanButton, detectButton, errorRefreshButton,
             refreshAllButton, autoCoordinateButton, captureCoordButton, captureClickButton,
             captureClick1Button, captureClick2Button, captureClick3Button,
-            saveCoordButton, saveSessionButton, restoreSelectedButton, restoreAllButton
+            testActionVisualsButton, saveCoordButton, saveSessionButton,
+            restoreSelectedButton, restoreAllButton
         })
         {
             windowTop.Controls.Add(c);
         }
 
-        hotkeyStatus.Text = "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem";
+        hotkeyStatus.Text = "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem görseli";
         hotkeyStatus.AutoSize = true;
         hotkeyStatus.Padding = new Padding(8, 8, 0, 0);
         windowTop.Controls.Add(hotkeyStatus);
@@ -255,9 +277,7 @@ public class MainForm : Form
         // RebuildGrid sütun isimleriyle aynı sırada.
         foreach (var c in new[] {
             "No", "Handle", "Başlık", "URL", "X", "Y", "Genişlik", "Yükseklik",
-            "Yenile RX", "Yenile RY", "İşlem 1 RX", "İşlem 1 RY",
-            "İşlem 2 RX", "İşlem 2 RY", "İşlem 3 RX", "İşlem 3 RY",
-            "Hata Durumu", "Eşleşme"
+            "Yenile RX", "Yenile RY", "Hata Durumu", "Eşleşme"
         }) grid.Columns.Add(c, c);
 
         windowsPage.Controls.Add(grid);
@@ -271,7 +291,7 @@ public class MainForm : Form
             Padding = new Padding(20),
             AutoSize = true,
             ColumnCount = 2,
-            RowCount = 8
+            RowCount = 9
         };
         settingsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
         settingsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -309,12 +329,14 @@ public class MainForm : Form
             SaveTimingSettings();
         };
 
-        settingsPanel.Controls.Add(new Label { Text = "Sayfa yenileme sonrası bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        settingsPanel.Controls.Add(reloadWaitBox, 1, 1);
-        settingsPanel.Controls.Add(new Label { Text = "Tarama döngüleri arasındaki bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-        settingsPanel.Controls.Add(scanIntervalBox, 1, 2);
-        settingsPanel.Controls.Add(new Label { Text = "İşlem tıklamaları arasındaki bekleme (ms):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
-        settingsPanel.Controls.Add(actionClickDelayBox, 1, 3);
+        settingsPanel.Controls.Add(new Label { Text = "İşlem görseli eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        settingsPanel.Controls.Add(actionTemplateThresholdBox, 1, 1);
+        settingsPanel.Controls.Add(new Label { Text = "Sayfa yenileme sonrası bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+        settingsPanel.Controls.Add(reloadWaitBox, 1, 2);
+        settingsPanel.Controls.Add(new Label { Text = "Tarama döngüleri arasındaki bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
+        settingsPanel.Controls.Add(scanIntervalBox, 1, 3);
+        settingsPanel.Controls.Add(new Label { Text = "Görsel tıklamaları arasındaki bekleme (ms):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 4);
+        settingsPanel.Controls.Add(actionClickDelayBox, 1, 4);
 
         var urlGroup = new GroupBox { Text = "Toplu URL / Domain Değiştirme", Dock = DockStyle.Top, Padding = new Padding(12), Height = 145 };
         var urlPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3 };
@@ -330,7 +352,7 @@ public class MainForm : Form
         replaceDomainButton.Click += async (_, _) => await ReplaceSavedUrlDomainAsync();
         urlPanel.Controls.Add(replaceDomainButton, 1, 2);
         urlGroup.Controls.Add(urlPanel);
-        settingsPanel.Controls.Add(urlGroup, 0, 4);
+        settingsPanel.Controls.Add(urlGroup, 0, 5);
         settingsPanel.SetColumnSpan(urlGroup, 2);
 
         var settingsNote = new Label
@@ -338,7 +360,7 @@ public class MainForm : Form
             Text = "Not: URL değişikliğinde yalnızca eski domain değiştirilir; URL'nin geri kalan yolu ve parametreleri korunur.",
             AutoSize = true, MaximumSize = new System.Drawing.Size(700, 0), Padding = new Padding(0, 10, 0, 0)
         };
-        settingsPanel.Controls.Add(settingsNote, 0, 5);
+        settingsPanel.Controls.Add(settingsNote, 0, 6);
         settingsPanel.SetColumnSpan(settingsNote, 2);
 
         settingsPanel.Controls.Add(new Label
@@ -346,7 +368,7 @@ public class MainForm : Form
             Text = $"Kurulu sürüm: {Application.ProductVersion}",
             AutoSize = true,
             Anchor = AnchorStyles.Left
-        }, 0, 6);
+        }, 0, 7);
         checkUpdateButton.Text = "GÜNCELLEME DENETLE";
         checkUpdateButton.AutoSize = true;
         checkUpdateButton.Click += async (_, _) =>
@@ -361,7 +383,7 @@ public class MainForm : Form
                 checkUpdateButton.Enabled = true;
             }
         };
-        settingsPanel.Controls.Add(checkUpdateButton, 1, 6);
+        settingsPanel.Controls.Add(checkUpdateButton, 1, 7);
         settingsPage.Controls.Add(settingsPanel);
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
@@ -373,10 +395,15 @@ public class MainForm : Form
         {
             LoadTimingSettings();
             LoadTemplate();
+            LoadActionTemplates();
             ScanWindows();
             await UpdateService.CheckForUpdatesAsync(this, false, message => status.Text = message);
         };
-        FormClosed += (_, _) => closeButtonTemplate?.Dispose();
+        FormClosed += (_, _) =>
+        {
+            closeButtonTemplate?.Dispose();
+            DisposeActionTemplates();
+        };
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -434,7 +461,7 @@ public class MainForm : Form
                         break;
 
                     case VK_F9:
-                        CaptureClickCoordinate();
+                        BeginCaptureActionTemplate(selectedClickNumber);
                         break;
 
                     case VK_F11:
@@ -454,33 +481,29 @@ public class MainForm : Form
 
     IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        // Tek işlem koordinatı değiştirme modu:
-        // Butona basıldıktan sonra gelen İLK sol tıklamanın koordinatını al.
-        // UI butonunun kendi tıklaması bu moda girmeden önce gerçekleştiği
-        // için buton koordinatı kaydedilmez.
-        if (nCode >= 0 && pendingSpecificClickNumber >= 1 &&
-            (wParam == (IntPtr)WM_LBUTTONDOWN || wParam == (IntPtr)WM_LBUTTONUP))
+        if (nCode >= 0 && wParam == (IntPtr)WM_LBUTTONUP &&
+            suppressTemplateCaptureMouseDown)
         {
-            if (wParam == (IntPtr)WM_LBUTTONDOWN)
-            {
-                var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-                int x = data.pt.X;
-                int y = data.pt.Y;
+            suppressTemplateCaptureMouseDown = false;
+            return (IntPtr)1;
+        }
 
-                BeginInvoke(new Action(() =>
-                    CapturePendingSpecificCoordinate(x, y)));
+        // İşlem görseli yakalama modu: Kullanıcının hedef düğmeye yaptığı ilk
+        // sol tıklamayı yutar ve tıklama çevresini görsel şablon olarak saklar.
+        if (nCode >= 0 && pendingActionTemplateNumber >= 1 &&
+            wParam == (IntPtr)WM_LBUTTONDOWN)
+        {
+            var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            int actionNumber = pendingActionTemplateNumber;
+            int x = data.pt.X;
+            int y = data.pt.Y;
+            pendingActionTemplateNumber = 0;
+            suppressTemplateCaptureMouseDown = true;
 
-                // Hedef uygulamaya gerçek tıklamayı göndermiyoruz.
-                // Böylece sadece koordinat değiştirilir, işlem tetiklenmez.
-                suppressSpecificMouseDown = true;
-                return (IntPtr)1;
-            }
+            BeginInvoke(new Action(() => CapturePendingActionTemplate(actionNumber, x, y)));
 
-            if (wParam == (IntPtr)WM_LBUTTONUP && suppressSpecificMouseDown)
-            {
-                suppressSpecificMouseDown = false;
-                return (IntPtr)1;
-            }
+            // Hedef uygulamaya gerçek tıklamayı göndermiyoruz.
+            return (IntPtr)1;
         }
 
         if (nCode >= 0 && autoCoordinateCapture &&
@@ -542,9 +565,11 @@ public class MainForm : Form
             pageReloadWaitSeconds = Math.Clamp(cfg.ReloadWaitSeconds, 1, 600);
             scanIntervalSeconds = Math.Clamp(cfg.ScanIntervalSeconds, 1, 600);
             actionClickDelayMs = Math.Clamp(cfg.ActionClickDelayMs, 50, 10000);
+            decimal visualThreshold = Math.Clamp(cfg.ActionTemplateThreshold, .50m, .99m);
             reloadWaitBox.Value = pageReloadWaitSeconds;
             scanIntervalBox.Value = scanIntervalSeconds;
             actionClickDelayBox.Value = actionClickDelayMs;
+            actionTemplateThresholdBox.Value = visualThreshold;
         }
         catch { }
     }
@@ -559,7 +584,8 @@ public class MainForm : Form
                 {
                     ReloadWaitSeconds = pageReloadWaitSeconds,
                     ScanIntervalSeconds = scanIntervalSeconds,
-                    ActionClickDelayMs = actionClickDelayMs
+                    ActionClickDelayMs = actionClickDelayMs,
+                    ActionTemplateThreshold = actionTemplateThresholdBox.Value
                 }));
         }
         catch { }
@@ -570,6 +596,7 @@ public class MainForm : Form
         public int ReloadWaitSeconds { get; set; } = 30;
         public int ScanIntervalSeconds { get; set; } = 60;
         public int ActionClickDelayMs { get; set; } = 500;
+        public decimal ActionTemplateThreshold { get; set; } = .82m;
     }
 
 
@@ -591,11 +618,10 @@ public class MainForm : Form
         }
 
         autoCoordinateRow = 0;
-        autoCaptureStep = 0;
         suppressFirstAutoClick = true;
         suppressFirstAutoMouseUp = false;
         autoCoordinateCapture = true;
-        autoCoordinateButton.Text = "⏹ OTOMATİK KOORDİNAT TOPLAMAYI DURDUR";
+        autoCoordinateButton.Text = "⏹ YENİLEME NOKTALARINI TOPLAMAYI DURDUR";
         CaptureAutoCoordinateInstruction();
     }
 
@@ -604,7 +630,7 @@ public class MainForm : Form
         autoCoordinateCapture = false;
         suppressFirstAutoClick = false;
         suppressFirstAutoMouseUp = false;
-        autoCoordinateButton.Text = "⚡ OTOMATİK KOORDİNAT TOPLA";
+        autoCoordinateButton.Text = "⚡ YENİLEME NOKTALARINI TOPLA";
         status.Text = message;
     }
 
@@ -613,7 +639,7 @@ public class MainForm : Form
         if (!autoCoordinateCapture) return;
         if (autoCoordinateRow >= windows.Count)
         {
-            StopAutoCoordinateCapture("Tüm pencerelerin 4 koordinatı tamamlandı.");
+            StopAutoCoordinateCapture("Tüm pencerelerin yenileme noktaları tamamlandı.");
             SaveCoordinates();
             return;
         }
@@ -625,14 +651,8 @@ public class MainForm : Form
             grid.CurrentCell = grid.Rows[autoCoordinateRow].Cells[0];
         }
 
-        string step = autoCaptureStep switch
-        {
-            0 => "YENİLEME",
-            1 => "İŞLEM 1",
-            2 => "İŞLEM 2",
-            _ => "İŞLEM 3"
-        };
-        status.Text = $"Pencere {autoCoordinateRow + 1}/{windows.Count} — Mouse'u {step} noktasına götürün ve SOL TIKLAYIN.";
+        status.Text =
+            $"Pencere {autoCoordinateRow + 1}/{windows.Count} — Mouse'u YENİLEME noktasına götürün ve SOL TIKLAYIN.";
     }
 
     void CaptureAutoCoordinate(int screenX, int screenY)
@@ -642,44 +662,17 @@ public class MainForm : Form
         var (rx, ry) = ToRelative(w, screenX, screenY);
         int row = autoCoordinateRow;
 
-        switch (autoCaptureStep)
-        {
-            case 0:
-                w.RefreshRX = rx; w.RefreshRY = ry;
-                w.RefreshOffsetX = screenX - w.X;
-                w.RefreshOffsetY = screenY - w.Y;
-                grid.Rows[row].Cells["Yenile RX"].Value = FormatRel(rx);
-                grid.Rows[row].Cells["Yenile RY"].Value = FormatRel(ry);
-                break;
-            case 1:
-                w.Click1RX = rx; w.Click1RY = ry;
-                grid.Rows[row].Cells["İşlem 1 RX"].Value = FormatRel(rx);
-                grid.Rows[row].Cells["İşlem 1 RY"].Value = FormatRel(ry);
-                break;
-            case 2:
-                w.Click2RX = rx; w.Click2RY = ry;
-                grid.Rows[row].Cells["İşlem 2 RX"].Value = FormatRel(rx);
-                grid.Rows[row].Cells["İşlem 2 RY"].Value = FormatRel(ry);
-                break;
-            case 3:
-                w.Click3RX = rx; w.Click3RY = ry;
-                grid.Rows[row].Cells["İşlem 3 RX"].Value = FormatRel(rx);
-                grid.Rows[row].Cells["İşlem 3 RY"].Value = FormatRel(ry);
-                break;
-        }
+        w.RefreshRX = rx; w.RefreshRY = ry;
+        w.RefreshOffsetX = screenX - w.X;
+        w.RefreshOffsetY = screenY - w.Y;
+        grid.Rows[row].Cells["Yenile RX"].Value = FormatRel(rx);
+        grid.Rows[row].Cells["Yenile RY"].Value = FormatRel(ry);
 
-        autoCaptureStep++;
-        if (autoCaptureStep >= 4)
-        {
-            autoCaptureStep = 0;
-            autoCoordinateRow++;
+        autoCoordinateRow++;
 
-            // Her yeni pencereye/satıra geçildiğinde ilk tıklamayı
-            // yeniden engelle. Böylece her satırın YENİLEME
-            // koordinatı alınırken gerçek uygulamaya tıklanmaz.
-            suppressFirstAutoClick = true;
-            suppressFirstAutoMouseUp = false;
-        }
+        // Her yeni pencereye geçildiğinde ilk tıklamayı yeniden engelle.
+        suppressFirstAutoClick = true;
+        suppressFirstAutoMouseUp = false;
 
         CaptureAutoCoordinateInstruction();
     }
@@ -702,6 +695,83 @@ public class MainForm : Form
             return BitmapConverter.ToMat(bmp);
         }
         catch { return null; }
+    }
+
+    string ActionTemplateSettingsPath =>
+        AppDataPaths.GetDataFilePath("action_template_settings.json");
+
+    static string GetActionTemplateFileName(int actionNumber) =>
+        $"action_button_{actionNumber}.png";
+
+    void LoadActionTemplates()
+    {
+        DisposeActionTemplates();
+
+        try
+        {
+            if (File.Exists(ActionTemplateSettingsPath))
+            {
+                var saved = JsonSerializer.Deserialize<VisualTemplateDefinition[]>(
+                    File.ReadAllText(ActionTemplateSettingsPath));
+                if (saved?.Length == 3)
+                    actionTemplateDefinitions = saved;
+            }
+        }
+        catch
+        {
+            actionTemplateDefinitions = [new(), new(), new()];
+        }
+
+        for (int i = 0; i < actionButtonTemplates.Length; i++)
+        {
+            string path = AppDataPaths.GetDataFilePath(GetActionTemplateFileName(i + 1));
+            if (!File.Exists(path)) continue;
+
+            try
+            {
+                using var bitmap = new Bitmap(path);
+                var template = BitmapConverter.ToMat(bitmap);
+                if (template.Width >= 10 && template.Height >= 10)
+                    actionButtonTemplates[i] = template;
+                else
+                    template.Dispose();
+            }
+            catch
+            {
+                actionButtonTemplates[i] = null;
+            }
+        }
+
+        UpdateActionTemplateButtonLabels();
+    }
+
+    void DisposeActionTemplates()
+    {
+        for (int i = 0; i < actionButtonTemplates.Length; i++)
+        {
+            actionButtonTemplates[i]?.Dispose();
+            actionButtonTemplates[i] = null;
+        }
+    }
+
+    void SaveActionTemplateSettings()
+    {
+        File.WriteAllText(
+            ActionTemplateSettingsPath,
+            JsonSerializer.Serialize(
+                actionTemplateDefinitions,
+                new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    void UpdateActionTemplateButtonLabels()
+    {
+        Button[] buttons = [captureClick1Button, captureClick2Button, captureClick3Button];
+        for (int i = 0; i < buttons.Length; i++)
+        {
+            buttons[i].Text = actionButtonTemplates[i] == null
+                ? $"İşlem {i + 1} Görselini Kaydet"
+                : $"✓ İşlem {i + 1} Görselini Değiştir";
+        }
     }
 
     void ScanWindows()
@@ -733,10 +803,7 @@ public class MainForm : Form
         {
             var w = windows[i];
             grid.Rows.Add(i + 1, $"0x{w.Handle.ToInt64():X}", w.Title, w.Url ?? "", w.X, w.Y, w.Width, w.Height,
-                FormatRel(w.RefreshRX), FormatRel(w.RefreshRY),
-                FormatRel(w.Click1RX), FormatRel(w.Click1RY),
-                FormatRel(w.Click2RX), FormatRel(w.Click2RY),
-                FormatRel(w.Click3RX), FormatRel(w.Click3RY), state, score);
+                FormatRel(w.RefreshRX), FormatRel(w.RefreshRY), state, score);
         }
     }
 
@@ -755,85 +822,95 @@ public class MainForm : Form
         status.Text = $"{index + 1}. pencerenin yenileme konumu kaydedildi.";
     }
 
-    void CaptureSpecificClickCoordinate(int clickNumber)
+    void BeginCaptureActionTemplate(int actionNumber)
     {
-        if (clickNumber < 1 || clickNumber > 3) return;
-        if (!TryGetSelectedWindow(out var w, out int index)) return;
+        if (actionNumber < 1 || actionNumber > 3) return;
+        if (scanCts != null)
+        {
+            MessageBox.Show("Görsel kaydetmeden önce çalışan taramayı F11 ile durdurun.");
+            return;
+        }
+        if (windows.Count == 0)
+        {
+            ScanWindows();
+            if (windows.Count == 0)
+            {
+                MessageBox.Show("Önce en az bir Chrome penceresi açın.");
+                return;
+            }
+        }
 
-        // Butona basıldığı anda mouse'un konumunu alma.
-        // Kullanıcıyı hedef noktaya götür ve bir sonraki sol tıklamayı bekle.
-        pendingSpecificClickNumber = clickNumber;
-        suppressSpecificMouseDown = false;
+        pendingActionTemplateNumber = actionNumber;
+        suppressTemplateCaptureMouseDown = false;
 
         status.Text =
-            $"{index + 1}. pencere — İşlem {clickNumber} koordinatı bekleniyor. " +
-            "Mouse'u hedef noktaya götürüp SOL TIKLAYIN.";
+            $"İşlem {actionNumber} görseli bekleniyor — Chrome'daki hedef düğmenin " +
+            "ORTASINA sol tıklayın. Bu kayıt tıklaması işleme gönderilmeyecek.";
     }
 
-    void CapturePendingSpecificCoordinate(int screenX, int screenY)
+    void CapturePendingActionTemplate(int actionNumber, int screenX, int screenY)
     {
-        int clickNumber = pendingSpecificClickNumber;
-        if (clickNumber < 1 || clickNumber > 3) return;
-        if (!TryGetSelectedWindow(out var w, out int index))
+        if (actionNumber < 1 || actionNumber > 3) return;
+
+        ChromeWindow? targetWindow = null;
+        foreach (var candidate in windows)
         {
-            pendingSpecificClickNumber = 0;
+            if (GetWindowRect(candidate.Handle, out var rect))
+            {
+                candidate.X = rect.Left;
+                candidate.Y = rect.Top;
+                candidate.Width = rect.Right - rect.Left;
+                candidate.Height = rect.Bottom - rect.Top;
+            }
+
+            if (screenX >= candidate.X && screenX < candidate.X + candidate.Width &&
+                screenY >= candidate.Y && screenY < candidate.Y + candidate.Height)
+            {
+                targetWindow = candidate;
+                break;
+            }
+        }
+
+        if (targetWindow == null)
+        {
+            MessageBox.Show("Tıklanan nokta taranmış bir Chrome penceresinin içinde değil.");
+            status.Text = $"İşlem {actionNumber} görseli kaydedilemedi.";
             return;
         }
 
-        var (rx, ry) = ToRelative(w, screenX, screenY);
-
-        switch (clickNumber)
+        try
         {
-            case 1:
-                w.Click1RX = rx;
-                w.Click1RY = ry;
-                grid.Rows[index].Cells["İşlem 1 RX"].Value = FormatRel(rx);
-                grid.Rows[index].Cells["İşlem 1 RY"].Value = FormatRel(ry);
-                break;
+            int captureWidth = Math.Min(ActionTemplateWidth, targetWindow.Width);
+            int captureHeight = Math.Min(ActionTemplateHeight, targetWindow.Height);
+            int minLeft = targetWindow.X;
+            int maxLeft = targetWindow.X + targetWindow.Width - captureWidth;
+            int minTop = targetWindow.Y;
+            int maxTop = targetWindow.Y + targetWindow.Height - captureHeight;
+            int left = Math.Clamp(screenX - captureWidth / 2, minLeft, maxLeft);
+            int top = Math.Clamp(screenY - captureHeight / 2, minTop, maxTop);
 
-            case 2:
-                w.Click2RX = rx;
-                w.Click2RY = ry;
-                grid.Rows[index].Cells["İşlem 2 RX"].Value = FormatRel(rx);
-                grid.Rows[index].Cells["İşlem 2 RY"].Value = FormatRel(ry);
-                break;
+            using var bitmap = CaptureScreenArea(left, top, captureWidth, captureHeight);
+            string path = AppDataPaths.GetDataFilePath(GetActionTemplateFileName(actionNumber));
+            bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
 
-            case 3:
-                w.Click3RX = rx;
-                w.Click3RY = ry;
-                grid.Rows[index].Cells["İşlem 3 RX"].Value = FormatRel(rx);
-                grid.Rows[index].Cells["İşlem 3 RY"].Value = FormatRel(ry);
-                break;
+            actionTemplateDefinitions[actionNumber - 1] = new VisualTemplateDefinition
+            {
+                ClickOffsetX = screenX - left,
+                ClickOffsetY = screenY - top
+            };
+            SaveActionTemplateSettings();
+            LoadActionTemplates();
+
+            selectedClickNumber = actionNumber == 3 ? 1 : actionNumber + 1;
+            status.Text =
+                $"İşlem {actionNumber} görseli kaydedildi ({captureWidth}×{captureHeight}). " +
+                "Otobot eşleşmenin kaydettiğiniz noktasına tıklayacak.";
         }
-
-        SaveCoordinates();
-        pendingSpecificClickNumber = 0;
-        suppressSpecificMouseDown = false;
-
-        status.Text =
-            $"{index + 1}. pencere — sadece İşlem {clickNumber} koordinatı güncellendi.";
-    }
-
-
-    void CaptureClickCoordinate()
-    {
-        if (!TryGetSelectedWindow(out var w, out int index)) return;
-        if (!GetCursorPos(out POINT p)) return;
-        var (rx, ry) = ToRelative(w, p.X, p.Y);
-        switch (selectedClickNumber)
+        catch (Exception ex)
         {
-            case 1:
-                w.Click1RX=rx; w.Click1RY=ry;
-                grid.Rows[index].Cells["İşlem 1 RX"].Value=FormatRel(rx); grid.Rows[index].Cells["İşlem 1 RY"].Value=FormatRel(ry); break;
-            case 2:
-                w.Click2RX=rx; w.Click2RY=ry;
-                grid.Rows[index].Cells["İşlem 2 RX"].Value=FormatRel(rx); grid.Rows[index].Cells["İşlem 2 RY"].Value=FormatRel(ry); break;
-            default:
-                w.Click3RX=rx; w.Click3RY=ry;
-                grid.Rows[index].Cells["İşlem 3 RX"].Value=FormatRel(rx); grid.Rows[index].Cells["İşlem 3 RY"].Value=FormatRel(ry); break;
+            MessageBox.Show("İşlem görseli kaydedilemedi:\n" + ex.Message);
+            status.Text = $"İşlem {actionNumber} görseli kaydedilemedi.";
         }
-        status.Text=$"{index+1}. pencere — İşlem {selectedClickNumber} konumu kaydedildi.";
-        selectedClickNumber=selectedClickNumber==3?1:selectedClickNumber+1;
     }
 
     bool TryGetSelectedWindow(out ChromeWindow w, out int index)
@@ -1347,13 +1424,10 @@ public class MainForm : Form
             using var bmp = CaptureScreenArea(w.X, w.Y, w.Width, w.Height);
             using var screenColor = BitmapConverter.ToMat(bmp);
             using var screen = new Mat();
-            Cv2.CvtColor(screenColor, screen, ColorConversionCodes.BGR2GRAY);
+            ConvertToGray(screenColor, screen);
 
             using var templateGray = new Mat();
-            if (closeButtonTemplate.Channels() == 1)
-                closeButtonTemplate.CopyTo(templateGray);
-            else
-                Cv2.CvtColor(closeButtonTemplate, templateGray, ColorConversionCodes.BGR2GRAY);
+            ConvertToGray(closeButtonTemplate, templateGray);
 
             // KAPAT butonu ortak hata göstergesi. Pencere/DPI değişikliklerine
             // karşı birden fazla ölçekte ara.
@@ -1447,13 +1521,78 @@ public class MainForm : Form
 
     bool CoordinatesReady() => windows.Count > 0 && windows.All(w => w.RefreshRX.HasValue && w.RefreshRY.HasValue);
 
+    bool ActionTemplatesReady() => actionButtonTemplates.All(template => template != null);
+
+    async Task TestActionTemplatesAsync()
+    {
+        if (!ActionTemplatesReady())
+        {
+            var missing = Enumerable.Range(1, 3)
+                .Where(number => actionButtonTemplates[number - 1] == null);
+            MessageBox.Show(
+                "Önce eksik işlem görsellerini kaydedin: " + string.Join(", ", missing));
+            return;
+        }
+        if (!TryGetSelectedWindow(out var w, out _)) return;
+
+        testActionVisualsButton.Enabled = false;
+        try
+        {
+            ShowWindow(w.Handle, SW_RESTORE);
+            if (!GetWindowRect(w.Handle, out var rect))
+                throw new InvalidOperationException("Chrome penceresinin konumu okunamadı.");
+
+            w.X = rect.Left;
+            w.Y = rect.Top;
+            w.Width = rect.Right - rect.Left;
+            w.Height = rect.Bottom - rect.Top;
+
+            if (!await ActivateChromeWindowAsync(w.Handle))
+                throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
+
+            await Task.Delay(200);
+            var results = new List<string>();
+            for (int i = 0; i < actionButtonTemplates.Length; i++)
+            {
+                var match = FindActionTemplate(
+                    w,
+                    actionButtonTemplates[i]!,
+                    actionTemplateDefinitions[i],
+                    (double)actionTemplateThresholdBox.Value);
+                results.Add(
+                    $"İşlem {i + 1}: {(match.Found ? "BULUNDU" : "bulunamadı")} — {match.Score:P1}");
+            }
+
+            MessageBox.Show(
+                string.Join(Environment.NewLine, results) +
+                $"\n\nKullanılan eşik: {actionTemplateThresholdBox.Value:P0}\nTest sırasında tıklama yapılmadı.",
+                "İşlem görselleri testi",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Görseller test edilemedi:\n" + ex.Message);
+        }
+        finally
+        {
+            testActionVisualsButton.Enabled = true;
+        }
+    }
+
     void StartContinuousScan()
     {
         if (scanCts != null) { status.Text = "Zaten çalışıyor. F11 ile durdurun."; return; }
         ScanWindows(); if (windows.Count == 0) { MessageBox.Show("Chrome penceresi bulunamadı."); return; }
         if (!CoordinatesReady()) { var missing = windows.Select((w, i) => new { w, i }).Where(x => !x.w.RefreshRX.HasValue || !x.w.RefreshRY.HasValue).Select(x => x.i + 1); MessageBox.Show("Yenileme koordinatı eksik olan pencereler: " + string.Join(", ", missing)); return; }
-        var missingClicks = windows.Select((w, i) => new { w, i }).Where(x => !x.w.Click1RX.HasValue || !x.w.Click1RY.HasValue || !x.w.Click2RX.HasValue || !x.w.Click2RY.HasValue || !x.w.Click3RX.HasValue || !x.w.Click3RY.HasValue).Select(x => x.i + 1).ToList();
-        if (missingClicks.Count > 0) { MessageBox.Show("3 işlem koordinatı eksik olan pencereler: " + string.Join(", ", missingClicks)); return; }
+        if (!ActionTemplatesReady())
+        {
+            var missing = Enumerable.Range(1, 3)
+                .Where(number => actionButtonTemplates[number - 1] == null);
+            MessageBox.Show(
+                "Önce eksik işlem görsellerini kaydedin: " + string.Join(", ", missing));
+            return;
+        }
         scanCts = new CancellationTokenSource(); hotkeyStatus.Text = "ÇALIŞIYOR — F11: Durdur"; _ = ContinuousScanLoopAsync(scanCts.Token);
     }
 
@@ -1462,17 +1601,119 @@ public class MainForm : Form
         if (scanCts == null) { status.Text = "Çalışan tarama yok."; return; } scanCts.Cancel(); status.Text = "Durdurma istendi...";
     }
 
-    async Task PerformThreeClicksAsync(ChromeWindow w,CancellationToken token)
+    async Task PerformVisualActionsAsync(ChromeWindow w, CancellationToken token)
     {
-        var points=new (double? X,double? Y)[]{(w.Click1RX,w.Click1RY),(w.Click2RX,w.Click2RY),(w.Click3RX,w.Click3RY)};
-        for(int i=0;i<points.Length;i++)
+        for (int i = 0; i < actionButtonTemplates.Length; i++)
         {
             token.ThrowIfCancellationRequested();
-            if(!points[i].X.HasValue||!points[i].Y.HasValue) throw new InvalidOperationException($"İşlem {i+1} koordinatı eksik.");
-            double x = points[i].X!.Value;
-            double y = points[i].Y!.Value;
-            var p=ToScreenPoint(w, x, y); SetCursorPos(p.X,p.Y); await Task.Delay(100,token);
-            mouse_event(MOUSEEVENTF_LEFTDOWN,0,0,0,UIntPtr.Zero); mouse_event(MOUSEEVENTF_LEFTUP,0,0,0,UIntPtr.Zero); await Task.Delay(actionClickDelayMs, token);
+            var template = actionButtonTemplates[i]
+                ?? throw new InvalidOperationException($"İşlem {i + 1} görseli eksik.");
+
+            if (!IsWindow(w.Handle))
+                throw new InvalidOperationException("Chrome penceresi artık açık değil.");
+
+            ShowWindow(w.Handle, SW_RESTORE);
+            if (!GetWindowRect(w.Handle, out var rect))
+                throw new InvalidOperationException("Chrome penceresinin konumu okunamadı.");
+
+            w.X = rect.Left;
+            w.Y = rect.Top;
+            w.Width = rect.Right - rect.Left;
+            w.Height = rect.Bottom - rect.Top;
+
+            if (!await ActivateChromeWindowAsync(w.Handle))
+                throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
+
+            await Task.Delay(150, token);
+
+            var match = FindActionTemplate(
+                w,
+                template,
+                actionTemplateDefinitions[i],
+                (double)actionTemplateThresholdBox.Value);
+
+            if (!match.Found)
+            {
+                throw new InvalidOperationException(
+                    $"İşlem {i + 1} görseli bulunamadı. En iyi eşleşme: {match.Score:P1}. " +
+                    "Görseli yeniden kaydedin veya görsel eşik değerini kontrollü biçimde azaltın.");
+            }
+
+            status.Text =
+                $"İşlem {i + 1} görseli bulundu ({match.Score:P1}); düğmeye tıklanıyor...";
+            SetCursorPos(match.ScreenX, match.ScreenY);
+            await Task.Delay(100, token);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+            await Task.Delay(actionClickDelayMs, token);
+        }
+    }
+
+    (bool Found, double Score, int ScreenX, int ScreenY) FindActionTemplate(
+        ChromeWindow w,
+        Mat template,
+        VisualTemplateDefinition definition,
+        double threshold)
+    {
+        double bestScore = 0;
+        int bestScreenX = 0;
+        int bestScreenY = 0;
+
+        using var bitmap = CaptureScreenArea(w.X, w.Y, w.Width, w.Height);
+        using var screenColor = BitmapConverter.ToMat(bitmap);
+        using var screenGray = new Mat();
+        ConvertToGray(screenColor, screenGray);
+
+        using var templateGray = new Mat();
+        ConvertToGray(template, templateGray);
+
+        foreach (double scale in new[] { .75, .85, .90, .95, 1.00, 1.05, 1.10, 1.15, 1.25 })
+        {
+            int width = Math.Max(10, (int)Math.Round(templateGray.Width * scale));
+            int height = Math.Max(10, (int)Math.Round(templateGray.Height * scale));
+            if (width >= screenGray.Width || height >= screenGray.Height) continue;
+
+            using var scaled = new Mat();
+            Cv2.Resize(templateGray, scaled, new OpenCvSharp.Size(width, height),
+                0, 0, InterpolationFlags.Linear);
+            using var result = new Mat();
+            Cv2.MatchTemplate(screenGray, scaled, result, TemplateMatchModes.CCoeffNormed);
+            Cv2.MinMaxLoc(result, out _, out double score, out _, out OpenCvSharp.Point location);
+
+            if (score <= bestScore) continue;
+
+            int originalAnchorX = definition.ClickOffsetX > 0
+                ? definition.ClickOffsetX
+                : templateGray.Width / 2;
+            int originalAnchorY = definition.ClickOffsetY > 0
+                ? definition.ClickOffsetY
+                : templateGray.Height / 2;
+
+            bestScore = score;
+            bestScreenX = w.X + location.X + (int)Math.Round(originalAnchorX * scale);
+            bestScreenY = w.Y + location.Y + (int)Math.Round(originalAnchorY * scale);
+        }
+
+        bool insideWindow =
+            bestScreenX >= w.X && bestScreenX < w.X + w.Width &&
+            bestScreenY >= w.Y && bestScreenY < w.Y + w.Height;
+
+        return (bestScore >= threshold && insideWindow, bestScore, bestScreenX, bestScreenY);
+    }
+
+    static void ConvertToGray(Mat source, Mat destination)
+    {
+        switch (source.Channels())
+        {
+            case 1:
+                source.CopyTo(destination);
+                break;
+            case 4:
+                Cv2.CvtColor(source, destination, ColorConversionCodes.BGRA2GRAY);
+                break;
+            default:
+                Cv2.CvtColor(source, destination, ColorConversionCodes.BGR2GRAY);
+                break;
         }
     }
 
@@ -1522,9 +1763,9 @@ public class MainForm : Form
                         SetForegroundWindow(w.Handle);
                         await Task.Delay(300, token);
 
-                        status.Text = $"Pencere {i + 1}: 3 işlem tıklaması yapılıyor...";
-                        await PerformThreeClicksAsync(w, token);
-                        UpdateRow(i, "İŞLEMLER YAPILDI", 0, Color.Honeydew);
+                        status.Text = $"Pencere {i + 1}: 3 işlem görseli aranıyor...";
+                        await PerformVisualActionsAsync(w, token);
+                        UpdateRow(i, "GÖRSEL İŞLEMLER YAPILDI", 0, Color.Honeydew);
                     }
                 }
                 else
@@ -1549,7 +1790,7 @@ public class MainForm : Form
         {
             scanCts?.Dispose();
             scanCts = null;
-            hotkeyStatus.Text = "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem";
+            hotkeyStatus.Text = "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem görseli";
         }
     }
 
@@ -1588,6 +1829,13 @@ public class MainForm : Form
         public IntPtr Handle; public string Title=""; public string? Url; public int X,Y,Width,Height;
         public double? RefreshRX,RefreshRY,Click1RX,Click1RY,Click2RX,Click2RY,Click3RX,Click3RY; public int? RefreshOffsetX, RefreshOffsetY;
     }
+
+    sealed class VisualTemplateDefinition
+    {
+        public int ClickOffsetX { get; set; }
+        public int ClickOffsetY { get; set; }
+    }
+
     sealed class SessionRecord
     {
         public int WindowNo { get; set; }

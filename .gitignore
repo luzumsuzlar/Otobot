@@ -16,6 +16,8 @@ TestResults/
 chrome_session.json
 refresh_coordinates.json
 timing_settings.json
+action_template_settings.json
+action_button_*.png
 
 # Logs and temporary files
 *.log
