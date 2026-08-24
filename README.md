@@ -6,6 +6,8 @@
 `SOHBETİ BUL VE KAYDET` düğmesi, bota daha önce `/start` gönderen son sohbeti otomatik
 bulur. Token Windows kullanıcı hesabına bağlı DPAPI şifrelemesiyle yerel olarak saklanır;
 Git deposuna veya uygulama paketine eklenmez. `TEST MESAJI GÖNDER` bağlantıyı doğrular.
+Rapor penceresi tablodan seçilebilir. Otomatik rapor açıldığında belirlenen aralıkta bakiye
+görüntüsü ile turnuva sıralamasındaki ilk 7 kişi tek bir Telegram görseli olarak gönderilir.
 
 .NET 8 Windows Forms ile geliştirilmiş Chrome pencere izleme ve işlem otomasyonu.
 

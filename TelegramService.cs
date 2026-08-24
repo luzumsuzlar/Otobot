@@ -27,7 +27,10 @@ internal sealed class TelegramService
             return new TelegramSettings
             {
                 Token = Unprotect(stored.ProtectedToken),
-                ChatId = stored.ChatId ?? string.Empty
+                ChatId = stored.ChatId ?? string.Empty,
+                ReportWindowNumber = Math.Max(1, stored.ReportWindowNumber),
+                ReportIntervalMinutes = Math.Clamp(stored.ReportIntervalMinutes, 1, 1440),
+                ReportsEnabled = stored.ReportsEnabled
             };
         }
         catch
@@ -40,10 +43,23 @@ internal sealed class TelegramService
     {
         ValidateToken(token);
 
+        TelegramSettings current = LoadSettings();
+        current.Token = token.Trim();
+        current.ChatId = chatId.Trim();
+        SaveSettings(current);
+    }
+
+    public void SaveSettings(TelegramSettings settings)
+    {
+        ValidateToken(settings.Token);
+
         var stored = new StoredTelegramSettings
         {
-            ProtectedToken = Protect(token.Trim()),
-            ChatId = chatId.Trim()
+            ProtectedToken = Protect(settings.Token.Trim()),
+            ChatId = settings.ChatId.Trim(),
+            ReportWindowNumber = Math.Max(1, settings.ReportWindowNumber),
+            ReportIntervalMinutes = Math.Clamp(settings.ReportIntervalMinutes, 1, 1440),
+            ReportsEnabled = settings.ReportsEnabled
         };
         File.WriteAllText(settingsPath, JsonSerializer.Serialize(stored));
     }
@@ -84,6 +100,30 @@ internal sealed class TelegramService
             new { chat_id = chatId.Trim(), text = message },
             cancellationToken);
         await EnsureTelegramSuccessAsync(httpResponse, cancellationToken);
+    }
+
+    public async Task SendPhotoAsync(
+        string token,
+        string chatId,
+        Stream image,
+        string fileName,
+        string caption,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateToken(token);
+        if (string.IsNullOrWhiteSpace(chatId))
+            throw new InvalidOperationException("Önce SOHBETİ BUL VE KAYDET düğmesini kullanın.");
+
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent(chatId.Trim()), "chat_id");
+        content.Add(new StringContent(caption), "caption");
+        using var imageContent = new StreamContent(image);
+        imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+        content.Add(imageContent, "photo", fileName);
+
+        using HttpResponseMessage response = await Http.PostAsync(
+            BuildEndpoint(token, "sendPhoto"), content, cancellationToken);
+        await EnsureTelegramSuccessAsync(response, cancellationToken);
     }
 
     private static async Task<JsonDocument> GetApiResponseAsync(
@@ -198,6 +238,9 @@ internal sealed class TelegramService
     {
         public string ProtectedToken { get; set; } = string.Empty;
         public string ChatId { get; set; } = string.Empty;
+        public int ReportWindowNumber { get; set; } = 3;
+        public int ReportIntervalMinutes { get; set; } = 30;
+        public bool ReportsEnabled { get; set; }
     }
 }
 
@@ -205,6 +248,9 @@ internal sealed class TelegramSettings
 {
     public string Token { get; set; } = string.Empty;
     public string ChatId { get; set; } = string.Empty;
+    public int ReportWindowNumber { get; set; } = 3;
+    public int ReportIntervalMinutes { get; set; } = 30;
+    public bool ReportsEnabled { get; set; }
 }
 
 internal sealed record TelegramChat(string Id, string DisplayName);

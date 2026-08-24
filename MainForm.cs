@@ -60,6 +60,7 @@ public class MainForm : Form
     const int SW_RESTORE = 9;
     const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    const uint MOUSEEVENTF_WHEEL = 0x0800;
     const uint MOD_NOREPEAT = 0x4000;
     const int HOTKEY_F8 = 5001, HOTKEY_F12 = 5002, HOTKEY_F11 = 5003, HOTKEY_F9 = 5004;
 
@@ -99,6 +100,11 @@ public class MainForm : Form
     readonly TextBox telegramChatIdBox = new();
     readonly Button findTelegramChatButton = new();
     readonly Button testTelegramButton = new();
+    readonly Button selectTelegramReportWindowButton = new();
+    readonly Button sendTelegramReportNowButton = new();
+    readonly Label telegramReportWindowLabel = new();
+    readonly NumericUpDown telegramReportIntervalBox = new();
+    readonly CheckBox enableTelegramReportsCheckBox = new();
     readonly TelegramService telegramService = new();
 
     readonly List<ChromeWindow> windows = new();
@@ -117,6 +123,11 @@ public class MainForm : Form
     int scanIntervalSeconds = 60;
     int actionClickDelayMs = 500;
     bool useVisualActions = true;
+    int telegramReportWindowNumber = 3;
+    int telegramReportIntervalMinutes = 30;
+    bool telegramSettingsLoading;
+    bool telegramReportInProgress;
+    CancellationTokenSource? telegramReportCts;
 
     int selectedClickNumber = 1;
     IntPtr keyboardHook = IntPtr.Zero;
@@ -426,9 +437,9 @@ public class MainForm : Form
             Text = "Telegram Rapor Ayarları",
             Dock = DockStyle.Top,
             Padding = new Padding(12),
-            Height = 185
+            Height = 310
         };
-        var telegramPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4 };
+        var telegramPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 8 };
         telegramPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         telegramPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         telegramTokenBox.Dock = DockStyle.Fill;
@@ -451,6 +462,33 @@ public class MainForm : Form
         testTelegramButton.AutoSize = true;
         testTelegramButton.Click += async (_, _) => await SendTelegramTestMessageAsync();
         telegramPanel.Controls.Add(testTelegramButton, 1, 3);
+
+        telegramReportWindowLabel.Text = "Rapor penceresi: 3";
+        telegramReportWindowLabel.AutoSize = true;
+        telegramReportWindowLabel.Anchor = AnchorStyles.Left;
+        telegramPanel.Controls.Add(telegramReportWindowLabel, 0, 4);
+        selectTelegramReportWindowButton.Text = "TABLODA SEÇİLİ PENCEREYİ KULLAN";
+        selectTelegramReportWindowButton.AutoSize = true;
+        selectTelegramReportWindowButton.Click += (_, _) => SelectTelegramReportWindow();
+        telegramPanel.Controls.Add(selectTelegramReportWindowButton, 1, 4);
+
+        telegramReportIntervalBox.Minimum = 1;
+        telegramReportIntervalBox.Maximum = 1440;
+        telegramReportIntervalBox.Value = 30;
+        telegramReportIntervalBox.Width = 90;
+        telegramReportIntervalBox.ValueChanged += (_, _) => SaveTelegramReportSettingsAndRestart();
+        telegramPanel.Controls.Add(new Label { Text = "Rapor aralığı (dk):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 5);
+        telegramPanel.Controls.Add(telegramReportIntervalBox, 1, 5);
+
+        enableTelegramReportsCheckBox.Text = "OTOMATİK TELEGRAM RAPORUNU AÇ";
+        enableTelegramReportsCheckBox.AutoSize = true;
+        enableTelegramReportsCheckBox.CheckedChanged += (_, _) => SaveTelegramReportSettingsAndRestart();
+        telegramPanel.Controls.Add(enableTelegramReportsCheckBox, 1, 6);
+
+        sendTelegramReportNowButton.Text = "RAPORU ŞİMDİ GÖNDER";
+        sendTelegramReportNowButton.AutoSize = true;
+        sendTelegramReportNowButton.Click += async (_, _) => await SendTelegramReportNowAsync();
+        telegramPanel.Controls.Add(sendTelegramReportNowButton, 1, 7);
         telegramGroup.Controls.Add(telegramPanel);
         settingsPanel.Controls.Add(telegramGroup, 0, 8);
         settingsPanel.SetColumnSpan(telegramGroup, 2);
@@ -519,6 +557,7 @@ public class MainForm : Form
             LoadRefreshTemplate();
             LoadActionTemplates();
             ScanWindows();
+            RestartTelegramReportLoop();
             await UpdateService.CheckForUpdatesAsync(
                 this,
                 false,
@@ -530,6 +569,8 @@ public class MainForm : Form
             closeButtonTemplate?.Dispose();
             refreshButtonTemplate?.Dispose();
             DisposeActionTemplates();
+            telegramReportCts?.Cancel();
+            telegramReportCts?.Dispose();
         };
     }
 
@@ -566,6 +607,13 @@ public class MainForm : Form
         TelegramSettings settings = telegramService.LoadSettings();
         telegramTokenBox.Text = settings.Token;
         telegramChatIdBox.Text = settings.ChatId;
+        telegramSettingsLoading = true;
+        telegramReportWindowNumber = Math.Max(1, settings.ReportWindowNumber);
+        telegramReportIntervalMinutes = Math.Clamp(settings.ReportIntervalMinutes, 1, 1440);
+        telegramReportIntervalBox.Value = telegramReportIntervalMinutes;
+        enableTelegramReportsCheckBox.Checked = settings.ReportsEnabled;
+        telegramReportWindowLabel.Text = $"Rapor penceresi: {telegramReportWindowNumber}";
+        telegramSettingsLoading = false;
     }
 
     async Task FindAndSaveTelegramChatAsync()
@@ -608,6 +656,249 @@ public class MainForm : Form
         {
             testTelegramButton.Enabled = true;
         }
+    }
+
+    void SelectTelegramReportWindow()
+    {
+        if (!TryGetSelectedWindow(out _, out int index)) return;
+        telegramReportWindowNumber = index + 1;
+        telegramReportWindowLabel.Text = $"Rapor penceresi: {telegramReportWindowNumber}";
+        SaveTelegramReportSettingsAndRestart();
+        ShowInfo($"{telegramReportWindowNumber} numaralı Chrome penceresi Telegram raporu için seçildi.");
+    }
+
+    void SaveTelegramReportSettingsAndRestart()
+    {
+        if (telegramSettingsLoading) return;
+
+        telegramReportIntervalMinutes = (int)telegramReportIntervalBox.Value;
+        try
+        {
+            telegramService.SaveSettings(new TelegramSettings
+            {
+                Token = telegramTokenBox.Text,
+                ChatId = telegramChatIdBox.Text,
+                ReportWindowNumber = telegramReportWindowNumber,
+                ReportIntervalMinutes = telegramReportIntervalMinutes,
+                ReportsEnabled = enableTelegramReportsCheckBox.Checked
+            });
+            RestartTelegramReportLoop();
+        }
+        catch (Exception ex)
+        {
+            if (enableTelegramReportsCheckBox.Checked)
+                ShowWarning("Telegram raporu başlatılamadı: " + ex.Message);
+        }
+    }
+
+    void RestartTelegramReportLoop()
+    {
+        telegramReportCts?.Cancel();
+        telegramReportCts?.Dispose();
+        telegramReportCts = null;
+
+        if (!enableTelegramReportsCheckBox.Checked || IsDisposed) return;
+        telegramReportCts = new CancellationTokenSource();
+        _ = RunTelegramReportLoopAsync(telegramReportCts.Token);
+    }
+
+    async Task RunTelegramReportLoopAsync(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMinutes(telegramReportIntervalMinutes), token);
+                await CreateAndSendTelegramReportAsync(token);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                ShowWarning("Otomatik Telegram raporu gönderilemedi; sonraki döngü devam edecek: " + ex.Message);
+            }
+        }
+    }
+
+    async Task SendTelegramReportNowAsync()
+    {
+        sendTelegramReportNowButton.Enabled = false;
+        try
+        {
+            await CreateAndSendTelegramReportAsync(CancellationToken.None);
+            ShowInfo("Bakiye ve ilk 7 kişilik puan listesi Telegram'a gönderildi.");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Telegram raporu gönderilemedi: " + ex.Message);
+        }
+        finally
+        {
+            sendTelegramReportNowButton.Enabled = true;
+        }
+    }
+
+    async Task CreateAndSendTelegramReportAsync(CancellationToken token)
+    {
+        if (telegramReportInProgress)
+            throw new InvalidOperationException("Başka bir Telegram raporu halen hazırlanıyor.");
+
+        if (windows.Count < telegramReportWindowNumber)
+            ScanWindows();
+        if (telegramReportWindowNumber < 1 || telegramReportWindowNumber > windows.Count)
+            throw new InvalidOperationException($"{telegramReportWindowNumber} numaralı Chrome penceresi bulunamadı.");
+
+        ChromeWindow reportWindow = windows[telegramReportWindowNumber - 1];
+        if (!GetWindowRect(reportWindow.Handle, out RECT rect))
+            throw new InvalidOperationException("Rapor penceresinin konumu okunamadı.");
+
+        reportWindow.X = rect.Left;
+        reportWindow.Y = rect.Top;
+        reportWindow.Width = rect.Right - rect.Left;
+        reportWindow.Height = rect.Bottom - rect.Top;
+        if (reportWindow.Width < 400 || reportWindow.Height < 300)
+            throw new InvalidOperationException("Rapor penceresi çok küçük veya simge durumunda.");
+
+        IntPtr previousWindow = GetForegroundWindow();
+        const int gameWidth = 293;
+        const int gameHeight = 187;
+        int gameLeft = reportWindow.X + (reportWindow.Width - gameWidth) / 2;
+        int gameTop = reportWindow.Y + 126;
+        bool tournamentDialogOpened = false;
+        telegramReportInProgress = true;
+
+        try
+        {
+            if (!await ActivateChromeWindowAsync(reportWindow.Handle))
+                throw new InvalidOperationException("Rapor penceresi öne getirilemedi.");
+            await Task.Delay(500, token);
+
+            using Bitmap gameImage = CaptureScreenArea(gameLeft, gameTop, gameWidth, gameHeight);
+            using Bitmap balanceImage = CropAndScale(
+                gameImage,
+                new System.Drawing.Rectangle(8, 122, 70, 62),
+                4);
+
+            await ClickScreenPointAsync(gameLeft + 10, gameTop + 134, token);
+            await Task.Delay(900, token);
+            using (Bitmap dialogCheck = CaptureScreenArea(gameLeft, gameTop, gameWidth, gameHeight))
+            {
+                if (!IsTournamentDialogVisible(dialogCheck))
+                    throw new InvalidOperationException("Kupa tıklamasından sonra Turnuvalar penceresi açılamadı.");
+            }
+            tournamentDialogOpened = true;
+            await ClickScreenPointAsync(gameLeft + 163, gameTop + 127, token);
+            await Task.Delay(700, token);
+
+            // Listenin yaklaşık 20 px sağ dışından kaydır. Böylece iç liste değil,
+            // turnuva penceresi hareket eder ve ilk 7 kişi birlikte görünür.
+            SetCursorPos(gameLeft + 249, gameTop + 144);
+            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, unchecked((uint)-120), UIntPtr.Zero);
+            await Task.Delay(900, token);
+
+            using Bitmap rankingImage = CaptureScreenArea(gameLeft, gameTop, gameWidth, gameHeight);
+            using Bitmap reportImage = BuildTelegramReportImage(balanceImage, rankingImage);
+            using var stream = new MemoryStream();
+            reportImage.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+            stream.Position = 0;
+
+            await telegramService.SendPhotoAsync(
+                telegramTokenBox.Text,
+                telegramChatIdBox.Text,
+                stream,
+                $"otobot-rapor-{DateTime.Now:yyyyMMdd-HHmmss}.png",
+                $"Otobot raporu • Pencere {telegramReportWindowNumber} • {DateTime.Now:dd.MM.yyyy HH:mm:ss}",
+                token);
+        }
+        finally
+        {
+            if (tournamentDialogOpened && IsWindow(reportWindow.Handle))
+            {
+                SetCursorPos(gameLeft + 280, gameTop + 32);
+                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+            }
+            if (previousWindow != IntPtr.Zero && IsWindow(previousWindow))
+                SetForegroundWindow(previousWindow);
+            telegramReportInProgress = false;
+        }
+    }
+
+    static bool IsTournamentDialogVisible(Bitmap image)
+    {
+        int darkPixels = 0;
+        int sampledPixels = 0;
+        int maxX = Math.Min(image.Width - 1, 275);
+        int maxY = Math.Min(image.Height - 1, 100);
+        for (int y = 35; y <= maxY; y++)
+        {
+            for (int x = 15; x <= maxX; x++)
+            {
+                Color pixel = image.GetPixel(x, y);
+                sampledPixels++;
+                if (pixel.R < 80 && pixel.G < 80 && pixel.B < 80)
+                    darkPixels++;
+            }
+        }
+        return sampledPixels > 0 && darkPixels / (double)sampledPixels >= .80;
+    }
+
+    static async Task ClickScreenPointAsync(int x, int y, CancellationToken token)
+    {
+        SetCursorPos(x, y);
+        await Task.Delay(100, token);
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    static Bitmap CropAndScale(Bitmap source, System.Drawing.Rectangle area, int scale)
+    {
+        var clipped = System.Drawing.Rectangle.Intersect(
+            new System.Drawing.Rectangle(0, 0, source.Width, source.Height), area);
+        if (clipped.Width <= 0 || clipped.Height <= 0)
+            throw new InvalidOperationException("Rapor görüntü alanı hesaplanamadı.");
+
+        using Bitmap crop = source.Clone(clipped, source.PixelFormat);
+        var result = new Bitmap(crop.Width * scale, crop.Height * scale);
+        using Graphics graphics = Graphics.FromImage(result);
+        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+        graphics.DrawImage(crop, 0, 0, result.Width, result.Height);
+        return result;
+    }
+
+    static Bitmap BuildTelegramReportImage(Bitmap balance, Bitmap rankings)
+    {
+        const int width = 920;
+        const int padding = 20;
+        const int headerHeight = 58;
+        const int sectionLabelHeight = 34;
+        int rankingWidth = rankings.Width * 3;
+        int rankingHeight = rankings.Height * 3;
+        int height = headerHeight + sectionLabelHeight + balance.Height +
+            sectionLabelHeight + rankingHeight + padding * 3;
+        var result = new Bitmap(width, height);
+        using Graphics graphics = Graphics.FromImage(result);
+        graphics.Clear(Color.FromArgb(24, 24, 27));
+        using var titleFont = new Font("Segoe UI", 20, FontStyle.Bold);
+        using var labelFont = new Font("Segoe UI", 14, FontStyle.Bold);
+        using var whiteBrush = new SolidBrush(Color.White);
+        using var yellowBrush = new SolidBrush(Color.Gold);
+        graphics.DrawString($"Otobot Raporu  •  {DateTime.Now:dd.MM.yyyy HH:mm:ss}", titleFont, whiteBrush, padding, 14);
+
+        int y = headerHeight + padding;
+        graphics.DrawString("KALAN BAKİYE", labelFont, yellowBrush, padding, y);
+        y += sectionLabelHeight;
+        graphics.DrawImage(balance, padding, y, balance.Width, balance.Height);
+        y += balance.Height + padding;
+        graphics.DrawString("PUAN SIRALAMASI — İLK 7", labelFont, yellowBrush, padding, y);
+        y += sectionLabelHeight;
+        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+        graphics.DrawImage(rankings, padding, y, rankingWidth, rankingHeight);
+        return result;
     }
 
     protected override void OnHandleCreated(EventArgs e)
