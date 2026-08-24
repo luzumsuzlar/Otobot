@@ -1,5 +1,12 @@
 # Otobot
 
+## Telegram bağlantısı
+
+`Ayarlar > Telegram Rapor Ayarları` bölümünde BotFather tokeni maskeli alana girilir.
+`SOHBETİ BUL VE KAYDET` düğmesi, bota daha önce `/start` gönderen son sohbeti otomatik
+bulur. Token Windows kullanıcı hesabına bağlı DPAPI şifrelemesiyle yerel olarak saklanır;
+Git deposuna veya uygulama paketine eklenmez. `TEST MESAJI GÖNDER` bağlantıyı doğrular.
+
 .NET 8 Windows Forms ile geliştirilmiş Chrome pencere izleme ve işlem otomasyonu.
 
 ## Kurulum ve güncelleme

@@ -95,6 +95,11 @@ public class MainForm : Form
     readonly Button replaceDomainButton = new();
     readonly Button checkUpdateButton = new();
     readonly CheckBox useVisualActionsCheckBox = new();
+    readonly TextBox telegramTokenBox = new();
+    readonly TextBox telegramChatIdBox = new();
+    readonly Button findTelegramChatButton = new();
+    readonly Button testTelegramButton = new();
+    readonly TelegramService telegramService = new();
 
     readonly List<ChromeWindow> windows = new();
     readonly string coordFile = AppDataPaths.GetDataFilePath("refresh_coordinates.json");
@@ -335,14 +340,14 @@ public class MainForm : Form
         windowsPage.Controls.Add(windowTop);
 
         // ---------------- AYARLAR SEKME ----------------
-        var settingsPage = new TabPage("⚙ Ayarlar");
+        var settingsPage = new TabPage("⚙ Ayarlar") { AutoScroll = true };
         var settingsPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             Padding = new Padding(20),
             AutoSize = true,
             ColumnCount = 2,
-            RowCount = 10
+            RowCount = 12
         };
         settingsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
         settingsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -416,12 +421,46 @@ public class MainForm : Form
         settingsPanel.Controls.Add(settingsNote, 0, 7);
         settingsPanel.SetColumnSpan(settingsNote, 2);
 
+        var telegramGroup = new GroupBox
+        {
+            Text = "Telegram Rapor Ayarları",
+            Dock = DockStyle.Top,
+            Padding = new Padding(12),
+            Height = 185
+        };
+        var telegramPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4 };
+        telegramPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+        telegramPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        telegramTokenBox.Dock = DockStyle.Fill;
+        telegramTokenBox.UseSystemPasswordChar = true;
+        telegramTokenBox.PlaceholderText = "BotFather'ın oluşturduğu yeni token";
+        telegramChatIdBox.Dock = DockStyle.Fill;
+        telegramChatIdBox.ReadOnly = true;
+        telegramChatIdBox.PlaceholderText = "Sohbeti Bul düğmesiyle otomatik belirlenir";
+        telegramPanel.Controls.Add(new Label { Text = "Bot tokeni:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        telegramPanel.Controls.Add(telegramTokenBox, 1, 0);
+        telegramPanel.Controls.Add(new Label { Text = "Sohbet kimliği:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        telegramPanel.Controls.Add(telegramChatIdBox, 1, 1);
+
+        findTelegramChatButton.Text = "SOHBETİ BUL VE KAYDET";
+        findTelegramChatButton.AutoSize = true;
+        findTelegramChatButton.Click += async (_, _) => await FindAndSaveTelegramChatAsync();
+        telegramPanel.Controls.Add(findTelegramChatButton, 1, 2);
+
+        testTelegramButton.Text = "TEST MESAJI GÖNDER";
+        testTelegramButton.AutoSize = true;
+        testTelegramButton.Click += async (_, _) => await SendTelegramTestMessageAsync();
+        telegramPanel.Controls.Add(testTelegramButton, 1, 3);
+        telegramGroup.Controls.Add(telegramPanel);
+        settingsPanel.Controls.Add(telegramGroup, 0, 8);
+        settingsPanel.SetColumnSpan(telegramGroup, 2);
+
         settingsPanel.Controls.Add(new Label
         {
             Text = $"Kurulu sürüm: {Application.ProductVersion}",
             AutoSize = true,
             Anchor = AnchorStyles.Left
-        }, 0, 8);
+        }, 0, 9);
         checkUpdateButton.Text = "GÜNCELLEME DENETLE";
         checkUpdateButton.AutoSize = true;
         checkUpdateButton.Click += async (_, _) =>
@@ -440,7 +479,7 @@ public class MainForm : Form
                 checkUpdateButton.Enabled = true;
             }
         };
-        settingsPanel.Controls.Add(checkUpdateButton, 1, 8);
+        settingsPanel.Controls.Add(checkUpdateButton, 1, 9);
         settingsPage.Controls.Add(settingsPanel);
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
@@ -475,6 +514,7 @@ public class MainForm : Form
         Shown += async (_, _) =>
         {
             LoadTimingSettings();
+            LoadTelegramSettings();
             LoadTemplate();
             LoadRefreshTemplate();
             LoadActionTemplates();
@@ -519,6 +559,55 @@ public class MainForm : Form
         notificationLabel.Text = "Uyarı yok.";
         notificationLabel.ForeColor = Color.DimGray;
         notificationPanel.BackColor = Color.WhiteSmoke;
+    }
+
+    void LoadTelegramSettings()
+    {
+        TelegramSettings settings = telegramService.LoadSettings();
+        telegramTokenBox.Text = settings.Token;
+        telegramChatIdBox.Text = settings.ChatId;
+    }
+
+    async Task FindAndSaveTelegramChatAsync()
+    {
+        findTelegramChatButton.Enabled = false;
+        try
+        {
+            TelegramChat chat = await telegramService.FindLatestChatAsync(telegramTokenBox.Text);
+            telegramChatIdBox.Text = chat.Id;
+            telegramService.SaveSettings(telegramTokenBox.Text, chat.Id);
+            ShowInfo($"Telegram sohbeti bulundu ve güvenli biçimde kaydedildi: {chat.DisplayName}");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Telegram sohbeti bulunamadı: " + ex.Message);
+        }
+        finally
+        {
+            findTelegramChatButton.Enabled = true;
+        }
+    }
+
+    async Task SendTelegramTestMessageAsync()
+    {
+        testTelegramButton.Enabled = false;
+        try
+        {
+            await telegramService.SendMessageAsync(
+                telegramTokenBox.Text,
+                telegramChatIdBox.Text,
+                $"Otobot bağlantısı çalışıyor. Test zamanı: {DateTime.Now:dd.MM.yyyy HH:mm:ss}");
+            telegramService.SaveSettings(telegramTokenBox.Text, telegramChatIdBox.Text);
+            ShowInfo("Telegram test mesajı başarıyla gönderildi.");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Telegram test mesajı gönderilemedi: " + ex.Message);
+        }
+        finally
+        {
+            testTelegramButton.Enabled = true;
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
