@@ -44,11 +44,11 @@ jobs:
           "value=$version" >> $env:GITHUB_OUTPUT
 
       - name: Restore dependencies
-        run: dotnet restore Chrome11Bot.csproj --runtime win-x64
+        run: dotnet restore Otobot.csproj --runtime win-x64
 
       - name: Publish self-contained Windows app
         run: >-
-          dotnet publish Chrome11Bot.csproj
+          dotnet publish Otobot.csproj
           --configuration Release
           --runtime win-x64
           --self-contained true
@@ -71,13 +71,14 @@ jobs:
           }
 
       - name: Build installer and update packages
+        # The original package ID is intentionally retained for installed users.
         run: >-
           vpk pack
           --packId Luzumsuzlar.Chrome11Bot
           --packVersion ${{ steps.version.outputs.value }}
           --packDir publish
-          --mainExe Chrome11Bot.exe
-          --packTitle Chrome11Bot
+          --mainExe Otobot.exe
+          --packTitle Otobot
           --packAuthors Luzumsuzlar
           --icon Chrome11Bot.ico
           --outputDir Releases
@@ -91,6 +92,29 @@ jobs:
           --outputDir Releases
           --token $env:VPK_TOKEN
           --publish
-          --releaseName "Chrome11Bot ${{ steps.version.outputs.value }}"
+          --releaseName "Otobot ${{ steps.version.outputs.value }}"
           --tag "v${{ steps.version.outputs.value }}"
           --targetCommitish "${{ github.sha }}"
+
+      - name: Rename public installer assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v${{ steps.version.outputs.value }}"
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag"
+          $renames = @{
+            "Luzumsuzlar.Chrome11Bot-win-Setup.exe" = "Otobot-win-Setup.exe"
+            "Luzumsuzlar.Chrome11Bot-win-Portable.zip" = "Otobot-win-Portable.zip"
+          }
+          foreach ($asset in $release.assets) {
+            if ($renames.ContainsKey($asset.name)) {
+              $body = @{ name = $renames[$asset.name] } | ConvertTo-Json
+              Invoke-RestMethod -Method Patch -Headers $headers -ContentType "application/json" -Body $body -Uri "https://api.github.com/repos/${{ github.repository }}/releases/assets/$($asset.id)"
+            }
+          }

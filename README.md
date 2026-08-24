@@ -1,10 +1,10 @@
-# Chrome11Bot v4.17
+# Otobot
 
 .NET 8 Windows Forms ile geliştirilmiş Chrome pencere izleme ve işlem otomasyonu.
 
 ## Kurulum ve güncelleme
 
-Son kullanıcılar GitHub Releases sayfasındaki `Setup.exe` dosyasını kullanarak
+Son kullanıcılar GitHub Releases sayfasındaki `Otobot-win-Setup.exe` dosyasını kullanarak
 kurulum yapmalıdır. Bu kurulumla gelen sürüm, uygulama açıldığında yeni kararlı
 sürümleri denetler ve kullanıcı onayıyla indirip kurar.
 

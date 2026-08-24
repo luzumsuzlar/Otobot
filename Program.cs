@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Velopack;
 
-namespace Chrome11Bot
+namespace Otobot
 {
     internal static class Program
     {

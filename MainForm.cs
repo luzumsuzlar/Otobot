@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-namespace Chrome11Bot;
+namespace Otobot;
 
 static class EmbeddedTemplates
 {
@@ -118,7 +118,7 @@ public class MainForm : Form
 
     public MainForm()
     {
-        Text = "Chrome 11 Bot - Hata Ekranı Algılama";
+        Text = "Otobot - Hata Ekranı Algılama";
         Width = 1250; Height = 700; StartPosition = FormStartPosition.CenterScreen;
         var applicationIcon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (applicationIcon != null) Icon = applicationIcon;

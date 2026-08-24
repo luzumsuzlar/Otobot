@@ -1,4 +1,4 @@
-# Chrome11Bot sürüm yayımlama
+# Otobot sürüm yayımlama
 
 Kullanıcılar uygulamayı ilk kez GitHub Releases sayfasındaki `Setup.exe` ile
 kurmalıdır. Velopack ile kurulan uygulamalar sonraki kararlı sürümleri açılışta
@@ -6,7 +6,7 @@ denetler ve kullanıcı onayıyla otomatik olarak yükler.
 
 ## Yeni sürüm yayımlama
 
-1. `Chrome11Bot.csproj` içindeki `<Version>` değerini artırın.
+1. `Otobot.csproj` içindeki `<Version>` değerini artırın.
 2. Değişiklikleri test edip `main` dalına gönderin.
 3. Aynı sürüm numarasıyla etiket oluşturup gönderin:
 
@@ -22,8 +22,10 @@ yayımlar. Alternatif olarak GitHub'daki Actions sayfasından iş akışını el
 
 ## Önemli
 
-- Uygulamadaki güncelleme kaynağı `https://github.com/luzumsuzlar/Chrome11Bot`
+- Uygulamadaki güncelleme kaynağı `https://github.com/luzumsuzlar/Otobot`
   adresidir.
+- Eski kurulumların güncelleme almayı sürdürmesi için teknik Velopack paket
+  kimliği `Luzumsuzlar.Chrome11Bot` olarak korunmalıdır.
 - Jeton gömülmediği için son kullanıcı güncellemelerinin çalışması adına bu
   depo veya güncelleme paketlerinin bulunduğu depo herkese açık olmalıdır.
 - Kurulum dosyalarını kod imzalama sertifikasıyla imzalamak Windows SmartScreen

@@ -7,10 +7,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AssemblyName>Otobot</AssemblyName>
+    <RootNamespace>Otobot</RootNamespace>
     <ApplicationIcon>Chrome11Bot.ico</ApplicationIcon>
-    <Version>4.17.0</Version>
+    <Version>4.17.1</Version>
     <Authors>Luzumsuzlar</Authors>
-    <Product>Chrome11Bot</Product>
+    <Product>Otobot</Product>
+    <AssemblyTitle>Otobot</AssemblyTitle>
     <Description>Chrome pencereleri için hata algılama ve işlem otomasyonu.</Description>
   </PropertyGroup>
 

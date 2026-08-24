@@ -12,7 +12,7 @@ TestResults/
 *.userosscache
 *.sln.docstates
 
-# Runtime/user data (stored under %LOCALAPPDATA%\Chrome11Bot in new builds)
+# Runtime/user data (stored under %LOCALAPPDATA%\Otobot in new builds)
 chrome_session.json
 refresh_coordinates.json
 timing_settings.json

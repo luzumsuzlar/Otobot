@@ -1,11 +1,11 @@
 using Velopack;
 using Velopack.Sources;
 
-namespace Chrome11Bot;
+namespace Otobot;
 
 internal static class UpdateService
 {
-    private const string RepositoryUrl = "https://github.com/luzumsuzlar/Chrome11Bot";
+    private const string RepositoryUrl = "https://github.com/luzumsuzlar/Otobot";
     private static readonly SemaphoreSlim CheckGate = new(1, 1);
 
     public static async Task CheckForUpdatesAsync(
@@ -16,7 +16,7 @@ internal static class UpdateService
         if (!await CheckGate.WaitAsync(0))
         {
             if (showNoUpdateMessage)
-                MessageBox.Show(owner, "Bir güncelleme denetimi zaten çalışıyor.", "Chrome11Bot");
+                MessageBox.Show(owner, "Bir güncelleme denetimi zaten çalışıyor.", "Otobot");
             return;
         }
 
@@ -31,8 +31,8 @@ internal static class UpdateService
                 {
                     MessageBox.Show(
                         owner,
-                        "Otomatik güncelleme yalnızca Chrome11Bot Setup ile kurulan sürümde çalışır.",
-                        "Chrome11Bot");
+                        "Otomatik güncelleme yalnızca Otobot Setup ile kurulan sürümde çalışır.",
+                        "Otobot");
                 }
                 return;
             }
@@ -42,16 +42,16 @@ internal static class UpdateService
 
             if (update == null)
             {
-                reportStatus?.Invoke("Chrome11Bot güncel.");
+                reportStatus?.Invoke("Otobot güncel.");
                 if (showNoUpdateMessage)
-                    MessageBox.Show(owner, "En güncel sürümü kullanıyorsunuz.", "Chrome11Bot");
+                    MessageBox.Show(owner, "En güncel sürümü kullanıyorsunuz.", "Otobot");
                 return;
             }
 
             string targetVersion = update.TargetFullRelease.Version.ToString();
             var answer = MessageBox.Show(
                 owner,
-                $"Chrome11Bot {targetVersion} sürümü hazır. Şimdi indirip kurmak ister misiniz?\n\n" +
+                $"Otobot {targetVersion} sürümü hazır. Şimdi indirip kurmak ister misiniz?\n\n" +
                 "Güncelleme tamamlandığında uygulama yeniden başlatılacak.",
                 "Güncelleme hazır",
                 MessageBoxButtons.YesNo,
@@ -76,7 +76,7 @@ internal static class UpdateService
                 MessageBox.Show(
                     owner,
                     "Güncelleme denetlenemedi:\n" + ex.Message,
-                    "Chrome11Bot",
+                    "Otobot",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
             }
