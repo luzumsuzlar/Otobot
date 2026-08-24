@@ -12,9 +12,12 @@ Geliştirici sürüm yayımlama adımları için `RELEASING.md` dosyasına bakı
 
 ## Görsel tabanlı işlem düğmeleri
 
-Otobot, üç işlem düğmesine sabit koordinatlarla tıklamak yerine kaydedilen
-görselleri Chrome penceresi içinde arar ve yalnızca yeterli eşleşme bulunduğunda
-düğmeye tıklar.
+Pencereler sekmesindeki `GÖRSEL MODU` seçim kutusu işaretliyken Otobot, üç işlem
+düğmesini kaydedilen görsellerle bulur. Seçim kutusu kapatıldığında aynı işlemler
+eski koordinat sistemiyle çalışır. Son kullanılan mod program kapatılıp açılsa da
+korunur.
+
+### Görsel modu
 
 1. Chrome pencerelerini tarayın.
 2. `İşlem 1 Görselini Kaydet` düğmesine basın.
@@ -29,6 +32,16 @@ Görseller `%LOCALAPPDATA%\Otobot` içinde saklanır. Bir görsel bulunamazsa g�
 için tıklama yapılmaz ve tarama açıklayıcı bir hatayla durur. Yenileme konumu,
 Chrome araç çubuğundaki düğme için mevcut koordinat sistemiyle çalışmaya devam
 eder.
+
+### Koordinat modu
+
+1. `GÖRSEL MODU` seçim kutusunu kapatın.
+2. Tablodan bir Chrome penceresi seçin.
+3. İşlem 1, 2 ve 3 koordinat kayıt düğmelerini kullanıp hedef noktalara tıklayın.
+4. Her Chrome penceresi için koordinatları kaydedin veya `TÜM KOORDİNATLARI TOPLA`
+   akışını kullanın.
+5. F12 ile başlatıldığında Otobot görsel aramak yerine kaydedilen koordinatlara
+   tıklar.
 
 Bu sürümde iki sorun birlikte düzeltildi:
 
