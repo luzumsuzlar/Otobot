@@ -29,11 +29,25 @@ kullanılan mod program kapatılıp açılsa da korunur.
 6. Tablodan bir Chrome penceresi seçip `YENİLEME GÖRSELİNİ TEST ET` ve
    `İŞLEM GÖRSELLERİNİ TEST ET` düğmeleriyle eşleşme oranlarını tıklama yapmadan
    kontrol edin.
-7. Gerekirse Ayarlar bölümündeki `Görsel eşik değeri`ni ayarlayın.
+7. Gerekirse Ayarlar bölümündeki ayrı `Yenileme görseli eşik değeri` ve
+   `İşlem görselleri eşik değeri` ayarlarını düzenleyin.
 
 Görseller `%LOCALAPPDATA%\Otobot` içinde saklanır. Bir görsel bulunamazsa güvenlik
 için tıklama yapılmaz ve tarama açıklayıcı bir hatayla durur. Yenileme görseli
 yalnızca Chrome penceresinin üst araç çubuğunda aranır.
+
+### %33 sayfa yakınlaştırması
+
+v4.18.3 ile görsel kaydı yapılırken fare hedef düğmeden otomatik olarak
+uzaklaştırılır ve hover görünümünün kapanması beklenir. İşlem görseli alanı
+%33 yakınlaştırmada küçük kalan düğmelere uygun olacak şekilde daraltılmıştır.
+Eşleştirmede gri tonla birlikte kenar/şekil bilgisi de kullanılır.
+
+Bu iyileştirmelerden yararlanmak için v4.18.3 kurulduktan sonra yenileme ve üç
+işlem görselini, sayfa yakınlaştırması `%33` durumundayken yeniden kaydedin.
+Önerilen başlangıç değerleri yenileme için `%72`, işlem görselleri için `%65`tir.
+Önce test düğmeleriyle birkaç farklı Chrome penceresinde doğrulama yapın; yanlış
+eşleşme görülürse ilgili eşik değerini yükseltin.
 
 ### Koordinat modu
 

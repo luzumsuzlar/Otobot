@@ -85,6 +85,7 @@ public class MainForm : Form
     readonly Button restoreSelectedButton = new();
     readonly Button restoreAllButton = new();
     readonly NumericUpDown thresholdBox = new();
+    readonly NumericUpDown refreshTemplateThresholdBox = new();
     readonly NumericUpDown actionTemplateThresholdBox = new();
     readonly TextBox oldDomainBox = new();
     readonly TextBox newDomainBox = new();
@@ -125,11 +126,12 @@ public class MainForm : Form
     bool pendingRefreshTemplateCapture = false;
     bool suppressActionCaptureMouseDown = false;
 
-    const int RefreshTemplateWidth = 90;
-    const int RefreshTemplateHeight = 50;
+    const int RefreshTemplateWidth = 74;
+    const int RefreshTemplateHeight = 42;
     const int RefreshSearchHeight = 180;
-    const int ActionTemplateWidth = 160;
-    const int ActionTemplateHeight = 70;
+    const int ActionTemplateWidth = 100;
+    const int ActionTemplateHeight = 50;
+    const int TemplateCaptureSettleMs = 350;
 
     readonly Button autoCoordinateButton = new();
     readonly Button captureClick1Button = new();
@@ -190,11 +192,19 @@ public class MainForm : Form
         thresholdBox.Value = .80m;
         thresholdBox.Width = 75;
 
+        refreshTemplateThresholdBox.DecimalPlaces = 2;
+        refreshTemplateThresholdBox.Minimum = .50m;
+        refreshTemplateThresholdBox.Maximum = .99m;
+        refreshTemplateThresholdBox.Increment = .01m;
+        refreshTemplateThresholdBox.Value = .72m;
+        refreshTemplateThresholdBox.Width = 75;
+        refreshTemplateThresholdBox.ValueChanged += (_, _) => SaveTimingSettings();
+
         actionTemplateThresholdBox.DecimalPlaces = 2;
         actionTemplateThresholdBox.Minimum = .50m;
         actionTemplateThresholdBox.Maximum = .99m;
         actionTemplateThresholdBox.Increment = .01m;
-        actionTemplateThresholdBox.Value = .82m;
+        actionTemplateThresholdBox.Value = .65m;
         actionTemplateThresholdBox.Width = 75;
         actionTemplateThresholdBox.ValueChanged += (_, _) => SaveTimingSettings();
 
@@ -329,7 +339,7 @@ public class MainForm : Form
             Padding = new Padding(20),
             AutoSize = true,
             ColumnCount = 2,
-            RowCount = 9
+            RowCount = 10
         };
         settingsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
         settingsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -367,14 +377,16 @@ public class MainForm : Form
             SaveTimingSettings();
         };
 
-        settingsPanel.Controls.Add(new Label { Text = "Görsel eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        settingsPanel.Controls.Add(actionTemplateThresholdBox, 1, 1);
-        settingsPanel.Controls.Add(new Label { Text = "Sayfa yenileme sonrası bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-        settingsPanel.Controls.Add(reloadWaitBox, 1, 2);
-        settingsPanel.Controls.Add(new Label { Text = "Tarama döngüleri arasındaki bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
-        settingsPanel.Controls.Add(scanIntervalBox, 1, 3);
-        settingsPanel.Controls.Add(new Label { Text = "Görsel tıklamaları arasındaki bekleme (ms):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 4);
-        settingsPanel.Controls.Add(actionClickDelayBox, 1, 4);
+        settingsPanel.Controls.Add(new Label { Text = "Yenileme görseli eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        settingsPanel.Controls.Add(refreshTemplateThresholdBox, 1, 1);
+        settingsPanel.Controls.Add(new Label { Text = "İşlem görselleri eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+        settingsPanel.Controls.Add(actionTemplateThresholdBox, 1, 2);
+        settingsPanel.Controls.Add(new Label { Text = "Sayfa yenileme sonrası bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
+        settingsPanel.Controls.Add(reloadWaitBox, 1, 3);
+        settingsPanel.Controls.Add(new Label { Text = "Tarama döngüleri arasındaki bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 4);
+        settingsPanel.Controls.Add(scanIntervalBox, 1, 4);
+        settingsPanel.Controls.Add(new Label { Text = "Görsel tıklamaları arasındaki bekleme (ms):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 5);
+        settingsPanel.Controls.Add(actionClickDelayBox, 1, 5);
 
         var urlGroup = new GroupBox { Text = "Toplu URL / Domain Değiştirme", Dock = DockStyle.Top, Padding = new Padding(12), Height = 145 };
         var urlPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3 };
@@ -390,7 +402,7 @@ public class MainForm : Form
         replaceDomainButton.Click += async (_, _) => await ReplaceSavedUrlDomainAsync();
         urlPanel.Controls.Add(replaceDomainButton, 1, 2);
         urlGroup.Controls.Add(urlPanel);
-        settingsPanel.Controls.Add(urlGroup, 0, 5);
+        settingsPanel.Controls.Add(urlGroup, 0, 6);
         settingsPanel.SetColumnSpan(urlGroup, 2);
 
         var settingsNote = new Label
@@ -398,7 +410,7 @@ public class MainForm : Form
             Text = "Not: URL değişikliğinde yalnızca eski domain değiştirilir; URL'nin geri kalan yolu ve parametreleri korunur.",
             AutoSize = true, MaximumSize = new System.Drawing.Size(700, 0), Padding = new Padding(0, 10, 0, 0)
         };
-        settingsPanel.Controls.Add(settingsNote, 0, 6);
+        settingsPanel.Controls.Add(settingsNote, 0, 7);
         settingsPanel.SetColumnSpan(settingsNote, 2);
 
         settingsPanel.Controls.Add(new Label
@@ -406,7 +418,7 @@ public class MainForm : Form
             Text = $"Kurulu sürüm: {Application.ProductVersion}",
             AutoSize = true,
             Anchor = AnchorStyles.Left
-        }, 0, 7);
+        }, 0, 8);
         checkUpdateButton.Text = "GÜNCELLEME DENETLE";
         checkUpdateButton.AutoSize = true;
         checkUpdateButton.Click += async (_, _) =>
@@ -421,7 +433,7 @@ public class MainForm : Form
                 checkUpdateButton.Enabled = true;
             }
         };
-        settingsPanel.Controls.Add(checkUpdateButton, 1, 7);
+        settingsPanel.Controls.Add(checkUpdateButton, 1, 8);
         settingsPage.Controls.Add(settingsPanel);
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
@@ -546,12 +558,12 @@ public class MainForm : Form
             pendingRefreshTemplateCapture = false;
             suppressActionCaptureMouseDown = true;
 
-            BeginInvoke(new Action(() =>
+            BeginInvoke(new Action(async () =>
             {
                 if (captureRefresh)
-                    CapturePendingRefreshTemplate(x, y);
+                    await CapturePendingRefreshTemplateAsync(x, y);
                 else if (captureVisual)
-                    CapturePendingActionTemplate(actionNumber, x, y);
+                    await CapturePendingActionTemplateAsync(actionNumber, x, y);
                 else
                     CapturePendingActionCoordinate(actionNumber, x, y);
             }));
@@ -619,11 +631,13 @@ public class MainForm : Form
             pageReloadWaitSeconds = Math.Clamp(cfg.ReloadWaitSeconds, 1, 600);
             scanIntervalSeconds = Math.Clamp(cfg.ScanIntervalSeconds, 1, 600);
             actionClickDelayMs = Math.Clamp(cfg.ActionClickDelayMs, 50, 10000);
-            decimal visualThreshold = Math.Clamp(cfg.ActionTemplateThreshold, .50m, .99m);
+            decimal refreshVisualThreshold = Math.Clamp(cfg.RefreshTemplateThreshold, .50m, .99m);
+            decimal actionVisualThreshold = Math.Clamp(cfg.ActionTemplateThreshold, .50m, .99m);
             reloadWaitBox.Value = pageReloadWaitSeconds;
             scanIntervalBox.Value = scanIntervalSeconds;
             actionClickDelayBox.Value = actionClickDelayMs;
-            actionTemplateThresholdBox.Value = visualThreshold;
+            refreshTemplateThresholdBox.Value = refreshVisualThreshold;
+            actionTemplateThresholdBox.Value = actionVisualThreshold;
             useVisualActions = cfg.UseVisualActions;
             useVisualActionsCheckBox.Checked = useVisualActions;
             ApplyActionModeUi();
@@ -642,6 +656,7 @@ public class MainForm : Form
                     ReloadWaitSeconds = pageReloadWaitSeconds,
                     ScanIntervalSeconds = scanIntervalSeconds,
                     ActionClickDelayMs = actionClickDelayMs,
+                    RefreshTemplateThreshold = refreshTemplateThresholdBox.Value,
                     ActionTemplateThreshold = actionTemplateThresholdBox.Value,
                     UseVisualActions = useVisualActions
                 }));
@@ -654,7 +669,8 @@ public class MainForm : Form
         public int ReloadWaitSeconds { get; set; } = 30;
         public int ScanIntervalSeconds { get; set; } = 60;
         public int ActionClickDelayMs { get; set; } = 500;
-        public decimal ActionTemplateThreshold { get; set; } = .82m;
+        public decimal RefreshTemplateThreshold { get; set; } = .72m;
+        public decimal ActionTemplateThreshold { get; set; } = .65m;
         public bool UseVisualActions { get; set; } = true;
     }
 
@@ -946,6 +962,7 @@ public class MainForm : Form
         autoCoordinateButton.Visible = !useVisualActions;
         captureCoordButton.Visible = !useVisualActions;
         saveCoordButton.Visible = !useVisualActions;
+        refreshTemplateThresholdBox.Enabled = useVisualActions;
         actionTemplateThresholdBox.Enabled = useVisualActions;
         hotkeyStatus.Text = useVisualActions
             ? "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem görseli"
@@ -1053,7 +1070,7 @@ public class MainForm : Form
             "simgesinin ORTASINA sol tıklayın. Bu kayıt tıklaması Chrome'a gönderilmeyecek.";
     }
 
-    void CapturePendingRefreshTemplate(int screenX, int screenY)
+    async Task CapturePendingRefreshTemplateAsync(int screenX, int screenY)
     {
         if (!TryFindWindowAt(screenX, screenY, out var targetWindow))
         {
@@ -1071,6 +1088,8 @@ public class MainForm : Form
 
         try
         {
+            await MoveCursorAwayAndWaitAsync(targetWindow, screenX, screenY);
+
             int captureWidth = Math.Min(RefreshTemplateWidth, targetWindow.Width);
             int captureHeight = Math.Min(RefreshTemplateHeight, targetWindow.Height);
             int left = Math.Clamp(
@@ -1126,6 +1145,28 @@ public class MainForm : Form
 
         targetWindow = null!;
         return false;
+    }
+
+    async Task MoveCursorAwayAndWaitAsync(ChromeWindow targetWindow, int targetX, int targetY)
+    {
+        const int margin = 12;
+        var safePoints = new[]
+        {
+            new System.Drawing.Point(targetWindow.X + margin, targetWindow.Y + margin),
+            new System.Drawing.Point(targetWindow.X + targetWindow.Width - margin, targetWindow.Y + margin),
+            new System.Drawing.Point(targetWindow.X + margin, targetWindow.Y + targetWindow.Height - margin),
+            new System.Drawing.Point(
+                targetWindow.X + targetWindow.Width - margin,
+                targetWindow.Y + targetWindow.Height - margin)
+        };
+
+        var safePoint = safePoints
+            .OrderByDescending(point =>
+                Math.Pow(point.X - targetX, 2) + Math.Pow(point.Y - targetY, 2))
+            .First();
+
+        SetCursorPos(safePoint.X, safePoint.Y);
+        await Task.Delay(TemplateCaptureSettleMs);
     }
 
     void BeginCaptureAction(int actionNumber)
@@ -1229,7 +1270,7 @@ public class MainForm : Form
         status.Text = $"{index + 1}. pencere — İşlem {actionNumber} koordinatı kaydedildi.";
     }
 
-    void CapturePendingActionTemplate(int actionNumber, int screenX, int screenY)
+    async Task CapturePendingActionTemplateAsync(int actionNumber, int screenX, int screenY)
     {
         if (actionNumber < 1 || actionNumber > 3) return;
 
@@ -1242,6 +1283,8 @@ public class MainForm : Form
 
         try
         {
+            await MoveCursorAwayAndWaitAsync(targetWindow, screenX, screenY);
+
             int captureWidth = Math.Min(ActionTemplateWidth, targetWindow.Width);
             int captureHeight = Math.Min(ActionTemplateHeight, targetWindow.Height);
             int minLeft = targetWindow.X;
@@ -1853,7 +1896,7 @@ public class MainForm : Form
             w,
             refreshButtonTemplate,
             refreshTemplateDefinition,
-            (double)actionTemplateThresholdBox.Value,
+            (double)refreshTemplateThresholdBox.Value,
             RefreshSearchHeight);
 
         if (!match.Found)
@@ -1992,12 +2035,12 @@ public class MainForm : Form
                 w,
                 refreshButtonTemplate,
                 refreshTemplateDefinition,
-                (double)actionTemplateThresholdBox.Value,
+                (double)refreshTemplateThresholdBox.Value,
                 RefreshSearchHeight);
 
             MessageBox.Show(
                 $"Yenileme: {(match.Found ? "BULUNDU" : "bulunamadı")} — {match.Score:P1}" +
-                $"\n\nKullanılan eşik: {actionTemplateThresholdBox.Value:P0}" +
+                $"\n\nKullanılan eşik: {refreshTemplateThresholdBox.Value:P0}" +
                 "\nTest sırasında tıklama yapılmadı.",
                 "Yenileme görseli testi",
                 MessageBoxButtons.OK,
@@ -2226,22 +2269,49 @@ public class MainForm : Form
         using var screenColor = BitmapConverter.ToMat(bitmap);
         using var screenGray = new Mat();
         ConvertToGray(screenColor, screenGray);
+        using var screenPrepared = new Mat();
+        Cv2.GaussianBlur(screenGray, screenPrepared, new OpenCvSharp.Size(3, 3), 0);
+        using var screenEdges = new Mat();
+        Cv2.Canny(screenPrepared, screenEdges, 40, 120);
 
         using var templateGray = new Mat();
         ConvertToGray(template, templateGray);
+        using var templatePrepared = new Mat();
+        Cv2.GaussianBlur(templateGray, templatePrepared, new OpenCvSharp.Size(3, 3), 0);
 
-        foreach (double scale in new[] { .75, .85, .90, .95, 1.00, 1.05, 1.10, 1.15, 1.25 })
+        foreach (double scale in new[] { .67, .75, .82, .88, .94, 1.00, 1.06, 1.12, 1.20, 1.30, 1.40 })
         {
-            int width = Math.Max(10, (int)Math.Round(templateGray.Width * scale));
-            int height = Math.Max(10, (int)Math.Round(templateGray.Height * scale));
-            if (width >= screenGray.Width || height >= screenGray.Height) continue;
+            int width = Math.Max(10, (int)Math.Round(templatePrepared.Width * scale));
+            int height = Math.Max(10, (int)Math.Round(templatePrepared.Height * scale));
+            if (width >= screenPrepared.Width || height >= screenPrepared.Height) continue;
 
             using var scaled = new Mat();
-            Cv2.Resize(templateGray, scaled, new OpenCvSharp.Size(width, height),
+            Cv2.Resize(templatePrepared, scaled, new OpenCvSharp.Size(width, height),
                 0, 0, InterpolationFlags.Linear);
-            using var result = new Mat();
-            Cv2.MatchTemplate(screenGray, scaled, result, TemplateMatchModes.CCoeffNormed);
-            Cv2.MinMaxLoc(result, out _, out double score, out _, out OpenCvSharp.Point location);
+            using var grayResult = new Mat();
+            Cv2.MatchTemplate(screenPrepared, scaled, grayResult, TemplateMatchModes.CCoeffNormed);
+
+            using var scaledEdges = new Mat();
+            Cv2.Canny(scaled, scaledEdges, 40, 120);
+            using var combinedResult = new Mat();
+
+            if (Cv2.CountNonZero(scaledEdges) >= 12)
+            {
+                using var edgeResult = new Mat();
+                Cv2.MatchTemplate(screenEdges, scaledEdges, edgeResult, TemplateMatchModes.CCoeffNormed);
+                Cv2.AddWeighted(grayResult, .72, edgeResult, .28, 0, combinedResult);
+            }
+            else
+            {
+                grayResult.CopyTo(combinedResult);
+            }
+
+            Cv2.MinMaxLoc(
+                combinedResult,
+                out _,
+                out double score,
+                out _,
+                out OpenCvSharp.Point location);
 
             if (score <= bestScore) continue;
 
