@@ -1,0 +1,26 @@
+# Visual Studio / .NET build output
+.vs/
+bin/
+obj/
+publish/
+Releases/
+TestResults/
+
+# User-specific IDE files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Runtime/user data (stored under %LOCALAPPDATA%\Chrome11Bot in new builds)
+chrome_session.json
+refresh_coordinates.json
+timing_settings.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# One-off migration script retained locally for reference
+modify.py
