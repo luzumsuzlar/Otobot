@@ -74,6 +74,8 @@ public class MainForm : Form
     readonly Button detectButton = new();
     readonly Button errorRefreshButton = new();
     readonly Button refreshAllButton = new();
+    readonly Button captureRefreshVisualButton = new();
+    readonly Button testRefreshVisualButton = new();
     readonly Button saveCoordButton = new();
     readonly Button captureClickButton = new();
     readonly Button captureCoordButton = new();
@@ -94,6 +96,8 @@ public class MainForm : Form
     readonly string coordFile = AppDataPaths.GetDataFilePath("refresh_coordinates.json");
     readonly string sessionFile = AppDataPaths.GetDataFilePath("chrome_session.json");
     Mat? closeButtonTemplate;
+    Mat? refreshButtonTemplate;
+    VisualTemplateDefinition refreshTemplateDefinition = new();
     readonly Mat?[] actionButtonTemplates = new Mat?[3];
     VisualTemplateDefinition[] actionTemplateDefinitions =
     [
@@ -118,8 +122,12 @@ public class MainForm : Form
     int autoCaptureStep = 0;
     int pendingActionCaptureNumber = 0;
     bool pendingActionCaptureUsesVisual = true;
+    bool pendingRefreshTemplateCapture = false;
     bool suppressActionCaptureMouseDown = false;
 
+    const int RefreshTemplateWidth = 90;
+    const int RefreshTemplateHeight = 50;
+    const int RefreshSearchHeight = 180;
     const int ActionTemplateWidth = 160;
     const int ActionTemplateHeight = 70;
 
@@ -150,6 +158,14 @@ public class MainForm : Form
 
         captureCoordButton.Text = "Mouse Konumunu Ata (F8)"; captureCoordButton.AutoSize = true; captureCoordButton.Click += (_, _) => CaptureCurrentMousePosition();
         saveCoordButton.Text = "Koordinatları Kaydet"; saveCoordButton.AutoSize = true; saveCoordButton.Click += (_, _) => SaveCoordinates();
+
+        captureRefreshVisualButton.Text = "Yenileme Görselini Kaydet (F8)";
+        captureRefreshVisualButton.AutoSize = true;
+        captureRefreshVisualButton.Click += (_, _) => BeginCaptureRefreshTemplate();
+
+        testRefreshVisualButton.Text = "YENİLEME GÖRSELİNİ TEST ET";
+        testRefreshVisualButton.AutoSize = true;
+        testRefreshVisualButton.Click += async (_, _) => await TestRefreshTemplateAsync();
 
         captureClickButton.Text = "Sıradaki İşlem Görselini Kaydet (F9)";
         captureClickButton.AutoSize = true;
@@ -265,7 +281,8 @@ public class MainForm : Form
         foreach (Control c in new Control[] {
             startButton, stopButton, useVisualActionsCheckBox,
             scanButton, detectButton, errorRefreshButton,
-            refreshAllButton, autoCoordinateButton, captureCoordButton, captureClickButton,
+            refreshAllButton, captureRefreshVisualButton, testRefreshVisualButton,
+            autoCoordinateButton, captureCoordButton, captureClickButton,
             captureClick1Button, captureClick2Button, captureClick3Button,
             testActionVisualsButton, saveCoordButton, saveSessionButton,
             restoreSelectedButton, restoreAllButton
@@ -350,7 +367,7 @@ public class MainForm : Form
             SaveTimingSettings();
         };
 
-        settingsPanel.Controls.Add(new Label { Text = "İşlem görseli eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        settingsPanel.Controls.Add(new Label { Text = "Görsel eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
         settingsPanel.Controls.Add(actionTemplateThresholdBox, 1, 1);
         settingsPanel.Controls.Add(new Label { Text = "Sayfa yenileme sonrası bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
         settingsPanel.Controls.Add(reloadWaitBox, 1, 2);
@@ -416,6 +433,7 @@ public class MainForm : Form
         {
             LoadTimingSettings();
             LoadTemplate();
+            LoadRefreshTemplate();
             LoadActionTemplates();
             ScanWindows();
             await UpdateService.CheckForUpdatesAsync(this, false, message => status.Text = message);
@@ -423,6 +441,7 @@ public class MainForm : Form
         FormClosed += (_, _) =>
         {
             closeButtonTemplate?.Dispose();
+            refreshButtonTemplate?.Dispose();
             DisposeActionTemplates();
         };
     }
@@ -478,7 +497,10 @@ public class MainForm : Form
                 switch (vk)
                 {
                     case VK_F8:
-                        CaptureCurrentMousePosition();
+                        if (useVisualActions)
+                            BeginCaptureRefreshTemplate();
+                        else
+                            CaptureCurrentMousePosition();
                         break;
 
                     case VK_F9:
@@ -510,20 +532,25 @@ public class MainForm : Form
         }
 
         // Seçili moda göre ilk sol tıklamadan görsel ya da koordinat kaydı al.
-        if (nCode >= 0 && pendingActionCaptureNumber >= 1 &&
+        if (nCode >= 0 &&
+            (pendingRefreshTemplateCapture || pendingActionCaptureNumber >= 1) &&
             wParam == (IntPtr)WM_LBUTTONDOWN)
         {
             var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             int actionNumber = pendingActionCaptureNumber;
             bool captureVisual = pendingActionCaptureUsesVisual;
+            bool captureRefresh = pendingRefreshTemplateCapture;
             int x = data.pt.X;
             int y = data.pt.Y;
             pendingActionCaptureNumber = 0;
+            pendingRefreshTemplateCapture = false;
             suppressActionCaptureMouseDown = true;
 
             BeginInvoke(new Action(() =>
             {
-                if (captureVisual)
+                if (captureRefresh)
+                    CapturePendingRefreshTemplate(x, y);
+                else if (captureVisual)
                     CapturePendingActionTemplate(actionNumber, x, y);
                 else
                     CapturePendingActionCoordinate(actionNumber, x, y);
@@ -768,6 +795,56 @@ public class MainForm : Form
         catch { return null; }
     }
 
+    string RefreshTemplateSettingsPath =>
+        AppDataPaths.GetDataFilePath("refresh_template_settings.json");
+
+    string RefreshTemplateFilePath =>
+        AppDataPaths.GetDataFilePath("refresh_button.png");
+
+    void LoadRefreshTemplate()
+    {
+        refreshButtonTemplate?.Dispose();
+        refreshButtonTemplate = null;
+        refreshTemplateDefinition = new VisualTemplateDefinition();
+
+        try
+        {
+            if (File.Exists(RefreshTemplateSettingsPath))
+            {
+                refreshTemplateDefinition =
+                    JsonSerializer.Deserialize<VisualTemplateDefinition>(
+                        File.ReadAllText(RefreshTemplateSettingsPath)) ?? new();
+            }
+
+            if (File.Exists(RefreshTemplateFilePath))
+            {
+                using var bitmap = new Bitmap(RefreshTemplateFilePath);
+                var template = BitmapConverter.ToMat(bitmap);
+                if (template.Width >= 10 && template.Height >= 10)
+                    refreshButtonTemplate = template;
+                else
+                    template.Dispose();
+            }
+        }
+        catch
+        {
+            refreshButtonTemplate?.Dispose();
+            refreshButtonTemplate = null;
+            refreshTemplateDefinition = new VisualTemplateDefinition();
+        }
+
+        UpdateRefreshTemplateButtonLabel();
+    }
+
+    void SaveRefreshTemplateSettings()
+    {
+        File.WriteAllText(
+            RefreshTemplateSettingsPath,
+            JsonSerializer.Serialize(
+                refreshTemplateDefinition,
+                new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     string ActionTemplateSettingsPath =>
         AppDataPaths.GetDataFilePath("action_template_settings.json");
 
@@ -851,18 +928,31 @@ public class MainForm : Form
         }
     }
 
+    void UpdateRefreshTemplateButtonLabel()
+    {
+        captureRefreshVisualButton.Text = refreshButtonTemplate == null
+            ? "Yenileme Görselini Kaydet (F8)"
+            : "✓ Yenileme Görselini Değiştir (F8)";
+    }
+
     void ApplyActionModeUi()
     {
         captureClickButton.Text = useVisualActions
             ? "Sıradaki İşlem Görselini Kaydet (F9)"
             : "Sıradaki İşlem Koordinatını Kaydet (F9)";
         testActionVisualsButton.Visible = useVisualActions;
+        captureRefreshVisualButton.Visible = useVisualActions;
+        testRefreshVisualButton.Visible = useVisualActions;
+        autoCoordinateButton.Visible = !useVisualActions;
+        captureCoordButton.Visible = !useVisualActions;
+        saveCoordButton.Visible = !useVisualActions;
         actionTemplateThresholdBox.Enabled = useVisualActions;
         hotkeyStatus.Text = useVisualActions
             ? "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem görseli"
             : "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem koordinatı";
 
         foreach (string columnName in new[] {
+            "Yenile RX", "Yenile RY",
             "İşlem 1 RX", "İşlem 1 RY", "İşlem 2 RX", "İşlem 2 RY",
             "İşlem 3 RX", "İşlem 3 RY"
         })
@@ -878,6 +968,7 @@ public class MainForm : Form
                 : "⚡ TÜM KOORDİNATLARI TOPLA";
         }
 
+        UpdateRefreshTemplateButtonLabel();
         UpdateActionTemplateButtonLabels();
     }
 
@@ -932,6 +1023,111 @@ public class MainForm : Form
         status.Text = $"{index + 1}. pencerenin yenileme konumu kaydedildi.";
     }
 
+    void BeginCaptureRefreshTemplate()
+    {
+        if (!useVisualActions)
+        {
+            MessageBox.Show("Yenileme görseli kaydetmek için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
+            return;
+        }
+        if (scanCts != null)
+        {
+            MessageBox.Show("Yenileme görselini kaydetmeden önce çalışan taramayı F11 ile durdurun.");
+            return;
+        }
+        if (windows.Count == 0)
+        {
+            ScanWindows();
+            if (windows.Count == 0)
+            {
+                MessageBox.Show("Önce en az bir Chrome penceresi açın.");
+                return;
+            }
+        }
+
+        pendingActionCaptureNumber = 0;
+        pendingRefreshTemplateCapture = true;
+        suppressActionCaptureMouseDown = false;
+        status.Text =
+            "Yenileme görseli bekleniyor — Chrome araç çubuğundaki yenileme " +
+            "simgesinin ORTASINA sol tıklayın. Bu kayıt tıklaması Chrome'a gönderilmeyecek.";
+    }
+
+    void CapturePendingRefreshTemplate(int screenX, int screenY)
+    {
+        if (!TryFindWindowAt(screenX, screenY, out var targetWindow))
+        {
+            MessageBox.Show("Tıklanan nokta taranmış bir Chrome penceresinin içinde değil.");
+            status.Text = "Yenileme görseli kaydedilemedi.";
+            return;
+        }
+
+        if (screenY >= targetWindow.Y + Math.Min(RefreshSearchHeight, targetWindow.Height))
+        {
+            MessageBox.Show("Yenileme simgesini Chrome penceresinin üst araç çubuğundan seçin.");
+            status.Text = "Yenileme görseli kaydedilemedi.";
+            return;
+        }
+
+        try
+        {
+            int captureWidth = Math.Min(RefreshTemplateWidth, targetWindow.Width);
+            int captureHeight = Math.Min(RefreshTemplateHeight, targetWindow.Height);
+            int left = Math.Clamp(
+                screenX - captureWidth / 2,
+                targetWindow.X,
+                targetWindow.X + targetWindow.Width - captureWidth);
+            int top = Math.Clamp(
+                screenY - captureHeight / 2,
+                targetWindow.Y,
+                targetWindow.Y + targetWindow.Height - captureHeight);
+
+            using var bitmap = CaptureScreenArea(left, top, captureWidth, captureHeight);
+            bitmap.Save(RefreshTemplateFilePath, System.Drawing.Imaging.ImageFormat.Png);
+
+            refreshTemplateDefinition = new VisualTemplateDefinition
+            {
+                ClickOffsetX = screenX - left,
+                ClickOffsetY = screenY - top
+            };
+            SaveRefreshTemplateSettings();
+            LoadRefreshTemplate();
+
+            status.Text =
+                $"Yenileme görseli kaydedildi ({captureWidth}×{captureHeight}). " +
+                "Otobot eşleşmenin kaydettiğiniz noktasına tıklayacak.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Yenileme görseli kaydedilemedi:\n" + ex.Message);
+            status.Text = "Yenileme görseli kaydedilemedi.";
+        }
+    }
+
+    bool TryFindWindowAt(int screenX, int screenY, out ChromeWindow targetWindow)
+    {
+        foreach (var candidate in windows)
+        {
+            if (GetWindowRect(candidate.Handle, out var rect))
+            {
+                candidate.X = rect.Left;
+                candidate.Y = rect.Top;
+                candidate.Width = rect.Right - rect.Left;
+                candidate.Height = rect.Bottom - rect.Top;
+            }
+
+            if (screenX >= candidate.X && screenX < candidate.X + candidate.Width &&
+                screenY >= candidate.Y && screenY < candidate.Y + candidate.Height)
+            {
+                targetWindow = candidate;
+                return true;
+            }
+        }
+
+        targetWindow = null!;
+        return false;
+    }
+
     void BeginCaptureAction(int actionNumber)
     {
         if (useVisualActions)
@@ -958,6 +1154,7 @@ public class MainForm : Form
             }
         }
 
+        pendingRefreshTemplateCapture = false;
         pendingActionCaptureNumber = actionNumber;
         pendingActionCaptureUsesVisual = true;
         suppressActionCaptureMouseDown = false;
@@ -977,6 +1174,7 @@ public class MainForm : Form
         }
         if (!TryGetSelectedWindow(out _, out int index)) return;
 
+        pendingRefreshTemplateCapture = false;
         pendingActionCaptureNumber = actionNumber;
         pendingActionCaptureUsesVisual = false;
         suppressActionCaptureMouseDown = false;
@@ -1035,26 +1233,7 @@ public class MainForm : Form
     {
         if (actionNumber < 1 || actionNumber > 3) return;
 
-        ChromeWindow? targetWindow = null;
-        foreach (var candidate in windows)
-        {
-            if (GetWindowRect(candidate.Handle, out var rect))
-            {
-                candidate.X = rect.Left;
-                candidate.Y = rect.Top;
-                candidate.Width = rect.Right - rect.Left;
-                candidate.Height = rect.Bottom - rect.Top;
-            }
-
-            if (screenX >= candidate.X && screenX < candidate.X + candidate.Width &&
-                screenY >= candidate.Y && screenY < candidate.Y + candidate.Height)
-            {
-                targetWindow = candidate;
-                break;
-            }
-        }
-
-        if (targetWindow == null)
+        if (!TryFindWindowAt(screenX, screenY, out var targetWindow))
         {
             MessageBox.Show("Tıklanan nokta taranmış bir Chrome penceresinin içinde değil.");
             status.Text = $"İşlem {actionNumber} görseli kaydedilemedi.";
@@ -1643,6 +1822,56 @@ public class MainForm : Form
 
     async Task ClickRefreshAsync(ChromeWindow w, CancellationToken token)
     {
+        if (useVisualActions)
+            await ClickRefreshByVisualAsync(w, token);
+        else
+            await ClickRefreshByCoordinateAsync(w, token);
+    }
+
+    async Task ClickRefreshByVisualAsync(ChromeWindow w, CancellationToken token)
+    {
+        if (refreshButtonTemplate == null)
+            throw new InvalidOperationException("Yenileme görseli eksik.");
+
+        if (!IsWindow(w.Handle))
+            throw new InvalidOperationException("Chrome penceresi artık açık değil.");
+
+        ShowWindow(w.Handle, SW_RESTORE);
+        if (!GetWindowRect(w.Handle, out var rect))
+            throw new InvalidOperationException("Chrome penceresinin konumu/boyutu okunamadı.");
+
+        w.X = rect.Left;
+        w.Y = rect.Top;
+        w.Width = rect.Right - rect.Left;
+        w.Height = rect.Bottom - rect.Top;
+
+        if (!await ActivateChromeWindowAsync(w.Handle))
+            throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
+
+        await Task.Delay(150, token);
+        var match = FindVisualTemplate(
+            w,
+            refreshButtonTemplate,
+            refreshTemplateDefinition,
+            (double)actionTemplateThresholdBox.Value,
+            RefreshSearchHeight);
+
+        if (!match.Found)
+        {
+            throw new InvalidOperationException(
+                $"Yenileme görseli bulunamadı. En iyi eşleşme: {match.Score:P1}. " +
+                "Görseli yeniden kaydedin veya görsel eşik değerini kontrollü biçimde azaltın.");
+        }
+
+        status.Text = $"Yenileme görseli bulundu ({match.Score:P1}); tıklanıyor...";
+        SetCursorPos(match.ScreenX, match.ScreenY);
+        await Task.Delay(100, token);
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    async Task ClickRefreshByCoordinateAsync(ChromeWindow w, CancellationToken token)
+    {
         if (!w.RefreshRX.HasValue || !w.RefreshRY.HasValue)
             throw new InvalidOperationException("Yenileme koordinatı eksik.");
 
@@ -1704,12 +1933,85 @@ public class MainForm : Form
 
     bool CoordinatesReady() => windows.Count > 0 && windows.All(w => w.RefreshRX.HasValue && w.RefreshRY.HasValue);
 
+    bool EnsureRefreshMethodReady()
+    {
+        if (useVisualActions)
+        {
+            if (refreshButtonTemplate != null) return true;
+            MessageBox.Show("Önce Yenileme Görselini Kaydet düğmesiyle yenileme simgesini kaydedin.");
+            return false;
+        }
+
+        if (CoordinatesReady()) return true;
+        var missing = windows.Select((w, index) => new { w, index })
+            .Where(item => !item.w.RefreshRX.HasValue || !item.w.RefreshRY.HasValue)
+            .Select(item => item.index + 1);
+        MessageBox.Show(
+            "Yenileme koordinatı eksik olan pencereler: " + string.Join(", ", missing));
+        return false;
+    }
+
     bool ActionTemplatesReady() => actionButtonTemplates.All(template => template != null);
 
     bool ActionCoordinatesReady() => windows.All(w =>
         w.Click1RX.HasValue && w.Click1RY.HasValue &&
         w.Click2RX.HasValue && w.Click2RY.HasValue &&
         w.Click3RX.HasValue && w.Click3RY.HasValue);
+
+    async Task TestRefreshTemplateAsync()
+    {
+        if (!useVisualActions)
+        {
+            MessageBox.Show("Görsel testi için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
+            return;
+        }
+        if (refreshButtonTemplate == null)
+        {
+            MessageBox.Show("Önce yenileme görselini kaydedin.");
+            return;
+        }
+        if (!TryGetSelectedWindow(out var w, out _)) return;
+
+        testRefreshVisualButton.Enabled = false;
+        try
+        {
+            ShowWindow(w.Handle, SW_RESTORE);
+            if (!GetWindowRect(w.Handle, out var rect))
+                throw new InvalidOperationException("Chrome penceresinin konumu okunamadı.");
+
+            w.X = rect.Left;
+            w.Y = rect.Top;
+            w.Width = rect.Right - rect.Left;
+            w.Height = rect.Bottom - rect.Top;
+
+            if (!await ActivateChromeWindowAsync(w.Handle))
+                throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
+
+            await Task.Delay(200);
+            var match = FindVisualTemplate(
+                w,
+                refreshButtonTemplate,
+                refreshTemplateDefinition,
+                (double)actionTemplateThresholdBox.Value,
+                RefreshSearchHeight);
+
+            MessageBox.Show(
+                $"Yenileme: {(match.Found ? "BULUNDU" : "bulunamadı")} — {match.Score:P1}" +
+                $"\n\nKullanılan eşik: {actionTemplateThresholdBox.Value:P0}" +
+                "\nTest sırasında tıklama yapılmadı.",
+                "Yenileme görseli testi",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Yenileme görseli test edilemedi:\n" + ex.Message);
+        }
+        finally
+        {
+            testRefreshVisualButton.Enabled = true;
+        }
+    }
 
     async Task TestActionTemplatesAsync()
     {
@@ -1747,7 +2049,7 @@ public class MainForm : Form
             var results = new List<string>();
             for (int i = 0; i < actionButtonTemplates.Length; i++)
             {
-                var match = FindActionTemplate(
+                var match = FindVisualTemplate(
                     w,
                     actionButtonTemplates[i]!,
                     actionTemplateDefinitions[i],
@@ -1777,8 +2079,8 @@ public class MainForm : Form
     {
         if (scanCts != null) { status.Text = "Zaten çalışıyor. F11 ile durdurun."; return; }
         ScanWindows(); if (windows.Count == 0) { MessageBox.Show("Chrome penceresi bulunamadı."); return; }
-        if (!CoordinatesReady()) { var missing = windows.Select((w, i) => new { w, i }).Where(x => !x.w.RefreshRX.HasValue || !x.w.RefreshRY.HasValue).Select(x => x.i + 1); MessageBox.Show("Yenileme koordinatı eksik olan pencereler: " + string.Join(", ", missing)); return; }
-        if (!ActionTemplatesReady())
+        if (!EnsureRefreshMethodReady()) return;
+        if (useVisualActions && !ActionTemplatesReady())
         {
             var missing = Enumerable.Range(1, 3)
                 .Where(number => actionButtonTemplates[number - 1] == null);
@@ -1837,7 +2139,7 @@ public class MainForm : Form
 
             await Task.Delay(150, token);
 
-            var match = FindActionTemplate(
+            var match = FindVisualTemplate(
                 w,
                 template,
                 actionTemplateDefinitions[i],
@@ -1908,17 +2210,19 @@ public class MainForm : Form
         }
     }
 
-    (bool Found, double Score, int ScreenX, int ScreenY) FindActionTemplate(
+    (bool Found, double Score, int ScreenX, int ScreenY) FindVisualTemplate(
         ChromeWindow w,
         Mat template,
         VisualTemplateDefinition definition,
-        double threshold)
+        double threshold,
+        int? maximumSearchHeight = null)
     {
         double bestScore = 0;
         int bestScreenX = 0;
         int bestScreenY = 0;
 
-        using var bitmap = CaptureScreenArea(w.X, w.Y, w.Width, w.Height);
+        int searchHeight = Math.Clamp(maximumSearchHeight ?? w.Height, 1, w.Height);
+        using var bitmap = CaptureScreenArea(w.X, w.Y, w.Width, searchHeight);
         using var screenColor = BitmapConverter.ToMat(bitmap);
         using var screenGray = new Mat();
         ConvertToGray(screenColor, screenGray);
@@ -2067,7 +2371,7 @@ public class MainForm : Form
     {
         try
         {
-            ScanWindows(); if (!CoordinatesReady()) { MessageBox.Show("Önce tüm yenileme koordinatlarını F8 ile kaydedin."); return; }
+            ScanWindows(); if (windows.Count == 0 || !EnsureRefreshMethodReady()) return;
             for (int i = 0; i < windows.Count; i++) { await ClickRefreshAsync(windows[i], CancellationToken.None); UpdateRow(i, "YENİLENİYOR...", 0, Color.Khaki); await Task.Delay(300); }
             status.Text = $"Tüm sayfalar yenilendi. {pageReloadWaitSeconds} saniye bekleniyor..."; await Task.Delay(pageReloadWaitSeconds * 1000); DetectErrors();
         }
@@ -2079,7 +2383,7 @@ public class MainForm : Form
         try
         {
             if (closeButtonTemplate == null) { LoadTemplate(); if (closeButtonTemplate == null) return; }
-            ScanWindows(); if (!CoordinatesReady()) { MessageBox.Show("Önce tüm yenileme koordinatlarını F8 ile kaydedin."); return; }
+            ScanWindows(); if (windows.Count == 0 || !EnsureRefreshMethodReady()) return;
             double threshold = (double)thresholdBox.Value; var errors = new List<int>();
             for (int i = 0; i < windows.Count; i++) { var r = FindError(windows[i], threshold); UpdateRow(i, r.Found ? "HATA BULUNDU" : "Normal", r.Score, r.Found ? Color.MistyRose : Color.Honeydew); if (r.Found) errors.Add(i); }
             foreach (int i in errors) { await ClickRefreshAsync(windows[i], CancellationToken.None); UpdateRow(i, "YENİLENİYOR...", 0, Color.Khaki); await Task.Delay(300); }

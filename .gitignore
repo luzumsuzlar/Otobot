@@ -18,6 +18,8 @@ refresh_coordinates.json
 timing_settings.json
 action_template_settings.json
 action_button_*.png
+refresh_template_settings.json
+refresh_button.png
 
 # Logs and temporary files
 *.log
