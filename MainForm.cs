@@ -106,6 +106,20 @@ public class MainForm : Form
     readonly NumericUpDown telegramReportIntervalBox = new();
     readonly CheckBox enableTelegramReportsCheckBox = new();
     readonly TelegramService telegramService = new();
+    readonly TextBox gmailAddressBox = new();
+    readonly TextBox gmailAppPasswordBox = new();
+    readonly TextBox gmailExpectedSenderBox = new();
+    readonly Button saveGmailSettingsButton = new();
+    readonly Button testGmailCodeButton = new();
+    readonly Button fillGmailCodeButton = new();
+    readonly GmailCodeService gmailCodeService = new();
+    readonly TextBox urlListBaseAddressBox = new();
+    readonly DataGridView urlListGrid = new();
+    readonly Button saveUrlListButton = new();
+    readonly Button addUrlListRowButton = new();
+    readonly UrlListService urlListService = new();
+    readonly GameReportOcrService gameReportOcrService = new();
+    readonly GameReportHistoryService gameReportHistoryService = new();
 
     readonly List<ChromeWindow> windows = new();
     readonly string coordFile = AppDataPaths.GetDataFilePath("refresh_coordinates.json");
@@ -124,8 +138,9 @@ public class MainForm : Form
     int actionClickDelayMs = 500;
     bool useVisualActions = true;
     int telegramReportWindowNumber = 3;
-    int telegramReportIntervalMinutes = 30;
+    int telegramReportIntervalMinutes = 60;
     bool telegramSettingsLoading;
+    bool urlListLoading;
     bool telegramReportInProgress;
     CancellationTokenSource? telegramReportCts;
 
@@ -463,7 +478,7 @@ public class MainForm : Form
         testTelegramButton.Click += async (_, _) => await SendTelegramTestMessageAsync();
         telegramPanel.Controls.Add(testTelegramButton, 1, 3);
 
-        telegramReportWindowLabel.Text = "Rapor penceresi: 3";
+        telegramReportWindowLabel.Text = "Rapor penceresi: 3 (normal otomasyondan muaf)";
         telegramReportWindowLabel.AutoSize = true;
         telegramReportWindowLabel.Anchor = AnchorStyles.Left;
         telegramPanel.Controls.Add(telegramReportWindowLabel, 0, 4);
@@ -474,7 +489,7 @@ public class MainForm : Form
 
         telegramReportIntervalBox.Minimum = 1;
         telegramReportIntervalBox.Maximum = 1440;
-        telegramReportIntervalBox.Value = 30;
+        telegramReportIntervalBox.Value = 60;
         telegramReportIntervalBox.Width = 90;
         telegramReportIntervalBox.ValueChanged += (_, _) => SaveTelegramReportSettingsAndRestart();
         telegramPanel.Controls.Add(new Label { Text = "Rapor aralığı (dk):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 5);
@@ -493,12 +508,51 @@ public class MainForm : Form
         settingsPanel.Controls.Add(telegramGroup, 0, 8);
         settingsPanel.SetColumnSpan(telegramGroup, 2);
 
+        var gmailGroup = new GroupBox
+        {
+            Text = "Gmail Doğrulama Kodu Ayarları",
+            Dock = DockStyle.Top,
+            Padding = new Padding(12),
+            Height = 225
+        };
+        var gmailPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 };
+        gmailPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+        gmailPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        gmailAddressBox.Dock = DockStyle.Fill;
+        gmailAddressBox.PlaceholderText = "ornek@gmail.com";
+        gmailAppPasswordBox.Dock = DockStyle.Fill;
+        gmailAppPasswordBox.UseSystemPasswordChar = true;
+        gmailAppPasswordBox.PlaceholderText = "Google'ın oluşturduğu 16 haneli uygulama şifresi";
+        gmailExpectedSenderBox.Dock = DockStyle.Fill;
+        gmailExpectedSenderBox.PlaceholderText = "Örn. no-reply@siteadi.com (ilk koddan sonra doldurun)";
+        gmailPanel.Controls.Add(new Label { Text = "Gmail adresi:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        gmailPanel.Controls.Add(gmailAddressBox, 1, 0);
+        gmailPanel.Controls.Add(new Label { Text = "Uygulama şifresi:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        gmailPanel.Controls.Add(gmailAppPasswordBox, 1, 1);
+        gmailPanel.Controls.Add(new Label { Text = "Kod gönderen:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+        gmailPanel.Controls.Add(gmailExpectedSenderBox, 1, 2);
+        saveGmailSettingsButton.Text = "GMAIL AYARLARINI GÜVENLE KAYDET";
+        saveGmailSettingsButton.AutoSize = true;
+        saveGmailSettingsButton.Click += (_, _) => SaveGmailSettings();
+        gmailPanel.Controls.Add(saveGmailSettingsButton, 1, 3);
+        testGmailCodeButton.Text = "SON DOĞRULAMA KODUNU TEST ET";
+        testGmailCodeButton.AutoSize = true;
+        testGmailCodeButton.Click += async (_, _) => await TestGmailCodeAsync();
+        gmailPanel.Controls.Add(testGmailCodeButton, 1, 4);
+        fillGmailCodeButton.Text = "AÇIK KOD EKRANINA KODU YAZ";
+        fillGmailCodeButton.AutoSize = true;
+        fillGmailCodeButton.Click += async (_, _) => await FillGmailCodeIntoOpenScreenAsync();
+        gmailPanel.Controls.Add(fillGmailCodeButton, 1, 5);
+        gmailGroup.Controls.Add(gmailPanel);
+        settingsPanel.Controls.Add(gmailGroup, 0, 9);
+        settingsPanel.SetColumnSpan(gmailGroup, 2);
+
         settingsPanel.Controls.Add(new Label
         {
             Text = $"Kurulu sürüm: {Application.ProductVersion}",
             AutoSize = true,
             Anchor = AnchorStyles.Left
-        }, 0, 9);
+        }, 0, 10);
         checkUpdateButton.Text = "GÜNCELLEME DENETLE";
         checkUpdateButton.AutoSize = true;
         checkUpdateButton.Click += async (_, _) =>
@@ -517,12 +571,79 @@ public class MainForm : Form
                 checkUpdateButton.Enabled = true;
             }
         };
-        settingsPanel.Controls.Add(checkUpdateButton, 1, 9);
+        settingsPanel.Controls.Add(checkUpdateButton, 1, 10);
         settingsPage.Controls.Add(settingsPanel);
+
+        var urlListPage = new TabPage("🔗 URL Listesi") { Padding = new Padding(16) };
+        var urlListLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 4
+        };
+        urlListLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+        urlListLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        urlListLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        urlListLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        urlListLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        urlListLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        urlListLayout.Controls.Add(new Label { Text = "Ana adres:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        urlListBaseAddressBox.Dock = DockStyle.Fill;
+        urlListBaseAddressBox.PlaceholderText = "https://www.ornek.com";
+        urlListBaseAddressBox.TextChanged += (_, _) => RefreshUrlListPreviews();
+        urlListLayout.Controls.Add(urlListBaseAddressBox, 1, 0);
+        urlListLayout.Controls.Add(new Label
+        {
+            Text = "Her satıra yalnızca / ile başlayan kalan URL bölümünü yazın. Ana adres değiştiğinde tüm tam adresler otomatik güncellenir.",
+            AutoSize = true,
+            MaximumSize = new System.Drawing.Size(800, 0),
+            Padding = new Padding(0, 8, 0, 8)
+        }, 1, 1);
+
+        urlListGrid.Dock = DockStyle.Fill;
+        urlListGrid.AllowUserToAddRows = false;
+        urlListGrid.AllowUserToDeleteRows = false;
+        urlListGrid.RowHeadersVisible = false;
+        urlListGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        urlListGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "No",
+            HeaderText = "No",
+            ReadOnly = true,
+            FillWeight = 12
+        });
+        urlListGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Remainder",
+            HeaderText = "Geri Kalan URL",
+            FillWeight = 44
+        });
+        urlListGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "FullUrl",
+            HeaderText = "Tam Adres Önizlemesi",
+            ReadOnly = true,
+            FillWeight = 44
+        });
+        urlListGrid.CellValueChanged += (_, _) => RefreshUrlListPreviews();
+        urlListLayout.Controls.Add(urlListGrid, 0, 2);
+        urlListLayout.SetColumnSpan(urlListGrid, 2);
+        var urlListButtons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Left };
+        saveUrlListButton.Text = "URL LİSTESİNİ KAYDET";
+        saveUrlListButton.AutoSize = true;
+        saveUrlListButton.Click += (_, _) => SaveUrlList();
+        addUrlListRowButton.Text = "+ YENİ URL SATIRI";
+        addUrlListRowButton.AutoSize = true;
+        addUrlListRowButton.Click += (_, _) => AddUrlListRow();
+        urlListButtons.Controls.Add(saveUrlListButton);
+        urlListButtons.Controls.Add(addUrlListRowButton);
+        urlListLayout.Controls.Add(urlListButtons, 1, 3);
+        urlListPage.Controls.Add(urlListLayout);
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(windowsPage);
         tabs.TabPages.Add(settingsPage);
+        tabs.TabPages.Add(urlListPage);
 
         notificationPanel.Dock = DockStyle.Bottom;
         notificationPanel.Height = 68;
@@ -553,6 +674,8 @@ public class MainForm : Form
         {
             LoadTimingSettings();
             LoadTelegramSettings();
+            LoadGmailSettings();
+            LoadUrlList();
             LoadTemplate();
             LoadRefreshTemplate();
             LoadActionTemplates();
@@ -612,8 +735,341 @@ public class MainForm : Form
         telegramReportIntervalMinutes = Math.Clamp(settings.ReportIntervalMinutes, 1, 1440);
         telegramReportIntervalBox.Value = telegramReportIntervalMinutes;
         enableTelegramReportsCheckBox.Checked = settings.ReportsEnabled;
-        telegramReportWindowLabel.Text = $"Rapor penceresi: {telegramReportWindowNumber}";
+        telegramReportWindowLabel.Text = $"Rapor penceresi: {telegramReportWindowNumber} (normal otomasyondan muaf)";
         telegramSettingsLoading = false;
+    }
+
+    void LoadGmailSettings()
+    {
+        GmailCodeSettings settings = gmailCodeService.LoadSettings();
+        gmailAddressBox.Text = settings.Address;
+        gmailAppPasswordBox.Text = settings.AppPassword;
+        gmailExpectedSenderBox.Text = settings.ExpectedSender;
+    }
+
+    void LoadUrlList()
+    {
+        UrlListSettings settings = urlListService.Load();
+        urlListLoading = true;
+        try
+        {
+            ApplyUrlList(settings);
+        }
+        finally
+        {
+            urlListLoading = false;
+        }
+        RefreshUrlListPreviews();
+    }
+
+    void ApplyUrlList(UrlListSettings settings)
+    {
+        urlListBaseAddressBox.Text = settings.BaseAddress;
+        urlListGrid.Rows.Clear();
+        int rowCount = Math.Max(15, settings.Remainders.Count);
+        for (int index = 0; index < rowCount; index++)
+        {
+            string remainder = index < settings.Remainders.Count ? settings.Remainders[index] : string.Empty;
+            urlListGrid.Rows.Add(index + 1, remainder, string.Empty);
+        }
+    }
+
+    void AddUrlListRow()
+    {
+        urlListGrid.Rows.Add(urlListGrid.Rows.Count + 1, string.Empty, string.Empty);
+        urlListGrid.CurrentCell = urlListGrid.Rows[urlListGrid.Rows.Count - 1].Cells["Remainder"];
+        urlListGrid.BeginEdit(true);
+    }
+
+    void RefreshUrlListPreviews()
+    {
+        if (urlListLoading || urlListGrid.Rows.Count == 0) return;
+        urlListLoading = true;
+        try
+        {
+            string baseAddress = urlListBaseAddressBox.Text.Trim().TrimEnd('/');
+            foreach (DataGridViewRow row in urlListGrid.Rows)
+            {
+                string remainder = row.Cells["Remainder"].Value?.ToString()?.Trim() ?? string.Empty;
+                row.Cells["FullUrl"].Value = string.IsNullOrWhiteSpace(baseAddress) || string.IsNullOrWhiteSpace(remainder)
+                    ? string.Empty
+                    : baseAddress + (remainder.StartsWith('/') ? remainder : "/" + remainder);
+            }
+        }
+        finally
+        {
+            urlListLoading = false;
+        }
+    }
+
+    void SaveUrlList()
+    {
+        try
+        {
+            var settings = new UrlListSettings
+            {
+                BaseAddress = urlListBaseAddressBox.Text,
+                Remainders = urlListGrid.Rows.Cast<DataGridViewRow>()
+                    .Select(row => row.Cells["Remainder"].Value?.ToString() ?? string.Empty)
+                    .ToList()
+            };
+            urlListService.Save(settings);
+            RefreshUrlListPreviews();
+            ShowInfo("URL listesi kaydedildi. Ana adres değiştiğinde yalnızca bu alanı güncellemeniz yeterli.");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("URL listesi kaydedilemedi: " + ex.Message);
+        }
+    }
+
+    void SaveGmailSettings()
+    {
+        try
+        {
+            gmailCodeService.SaveSettings(new GmailCodeSettings
+            {
+                Address = gmailAddressBox.Text,
+                AppPassword = gmailAppPasswordBox.Text,
+                ExpectedSender = gmailExpectedSenderBox.Text
+            });
+            ShowInfo("Gmail ayarları bu Windows kullanıcısı için şifreli olarak kaydedildi.");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Gmail ayarları kaydedilemedi: " + ex.Message);
+        }
+    }
+
+    async Task TestGmailCodeAsync()
+    {
+        testGmailCodeButton.Enabled = false;
+        try
+        {
+            var settings = new GmailCodeSettings
+            {
+                Address = gmailAddressBox.Text,
+                AppPassword = gmailAppPasswordBox.Text,
+                ExpectedSender = gmailExpectedSenderBox.Text
+            };
+            gmailCodeService.SaveSettings(settings);
+            GmailVerificationCode code = await gmailCodeService.FindRecentCodeAsync(
+                settings,
+                DateTime.Now.AddHours(-24));
+            ShowInfo($"Doğrulama kodu bulundu: {code.Code}. Gönderici filtresi için: {code.Sender}");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Gmail doğrulama kodu test edilemedi: " + ex.Message);
+        }
+        finally
+        {
+            testGmailCodeButton.Enabled = true;
+        }
+    }
+
+    async Task FillGmailCodeIntoOpenScreenAsync()
+    {
+        fillGmailCodeButton.Enabled = false;
+        try
+        {
+            ScanWindows();
+            // Birden fazla Chrome açıkken giriş yalnızca Telegram raporu için
+            // seçilmiş pencereye uygulanır. Diğer pencerelere kesinlikle kod yazma.
+            ChromeWindow? target = telegramReportWindowNumber >= 1 &&
+                telegramReportWindowNumber <= windows.Count
+                ? windows[telegramReportWindowNumber - 1]
+                : windows.Count == 1 ? windows[0] : null;
+            if (target == null)
+                throw new InvalidOperationException(
+                    $"Seçili rapor penceresi ({telegramReportWindowNumber}) bulunamadı. " +
+                    "Tablodan giriş yapılacak Chrome penceresini rapor penceresi olarak seçin.");
+            if (!await ActivateChromeWindowAsync(target.Handle))
+                throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
+
+            if (!IsVerificationCodeScreen(target))
+                throw new InvalidOperationException("Bu pencerede altı haneli doğrulama kodu ekranı bulunamadı.");
+
+            var settings = new GmailCodeSettings
+            {
+                Address = gmailAddressBox.Text,
+                AppPassword = gmailAppPasswordBox.Text,
+                ExpectedSender = gmailExpectedSenderBox.Text
+            };
+            bool loggedIn = false;
+            for (int attempt = 1; attempt <= 4; attempt++)
+            {
+                GmailVerificationCode code = await gmailCodeService.FindRecentCodeAsync(
+                    settings,
+                    DateTime.Now.AddHours(-24));
+
+                await WriteVerificationCodeAsync(target, code.Code);
+                status.Text = $"Giriş doğrulanıyor... Deneme {attempt}/4";
+                await Task.Delay(TimeSpan.FromSeconds(5));
+
+                if (!IsVerificationCodeScreen(target))
+                {
+                    loggedIn = true;
+                    ShowInfo($"Giriş doğrulandı. Kod {attempt}. denemede kabul edildi.");
+                    await ReloadUrlsAndPerformActionsAsync();
+                    break;
+                }
+
+                status.Text = $"Kod kabul edilmedi veya hata oluştu. Deneme {attempt}/4.";
+                await Task.Delay(1200);
+            }
+
+            if (!loggedIn)
+            {
+                const string message = "Otobot uyarısı: 4 denemeden sonra giriş yapılamadı. Chrome penceresini ve doğrulama e-postasını kontrol edin.";
+                try
+                {
+                    await telegramService.SendMessageAsync(
+                        telegramTokenBox.Text,
+                        telegramChatIdBox.Text,
+                        message);
+                    ShowWarning(message + " Telegram'a bildirildi.");
+                }
+                catch (Exception telegramError)
+                {
+                    ShowWarning(message + " Telegram bildirimi gönderilemedi: " + telegramError.Message);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Doğrulama kodu ekrana yazılamadı: " + ex.Message);
+        }
+        finally
+        {
+            fillGmailCodeButton.Enabled = true;
+        }
+    }
+
+    static bool IsVerificationCodeScreen(ChromeWindow window)
+    {
+        using Bitmap image = CaptureScreenArea(window.X, window.Y, window.Width, window.Height);
+        int left = (int)(image.Width * .35);
+        int right = (int)(image.Width * .66);
+        int top = (int)(image.Height * .60);
+        int bottom = (int)(image.Height * .82);
+        int blueBoxes = 0;
+        int redButton = 0;
+        for (int y = top; y < bottom; y += 2)
+        {
+            for (int x = left; x < right; x += 2)
+            {
+                Color pixel = image.GetPixel(x, y);
+                if (pixel.B > pixel.R + 12 && pixel.B > pixel.G + 5 && pixel.B > 75)
+                    blueBoxes++;
+                if (pixel.R > 145 && pixel.G < 95 && pixel.B < 95)
+                    redButton++;
+            }
+        }
+        return blueBoxes >= 18 && redButton >= 45;
+    }
+
+    static async Task WriteVerificationCodeAsync(ChromeWindow target, string code)
+    {
+        // Sayfa kodu tek alan gibi gösterse de aslında altı ayrı input kullanıyor.
+        // Her haneyi kendi kutusuna yazmak yarım kalan girişleri engeller.
+        for (int index = 0; index < code.Length; index++)
+        {
+            int inputX = target.X + (int)Math.Round(target.Width * (.407 + index * .031));
+            int inputY = target.Y + (int)Math.Round(target.Height * .68);
+            await ClickScreenPointAsync(inputX, inputY, CancellationToken.None);
+            SendKeys.SendWait(code[index].ToString());
+            await Task.Delay(80);
+        }
+    }
+
+    async Task ReloadUrlsAndPerformActionsAsync()
+    {
+        UrlListSettings urlList = urlListService.Load();
+        if (!Uri.TryCreate(urlList.BaseAddress, UriKind.Absolute, out Uri? baseUri))
+            throw new InvalidOperationException("URL Listesi'ndeki ana adres geçerli değil.");
+
+        List<string> urls = urlList.Remainders
+            .Where(remainder => !string.IsNullOrWhiteSpace(remainder))
+            .Select(remainder => urlList.BaseAddress.Trim().TrimEnd('/') +
+                (remainder.StartsWith('/') ? remainder : "/" + remainder))
+            .ToList();
+        if (urls.Count == 0)
+            throw new InvalidOperationException("URL Listesi boş. Önce PENCERELERİ KAYDET ile URL'leri kaydedin.");
+
+        ScanWindows();
+        if (windows.Count != urls.Count)
+            throw new InvalidOperationException(
+                $"Açık Chrome penceresi ({windows.Count}) ile URL Listesi ({urls.Count}) eşleşmiyor. " +
+                "Güvenli eşleştirme için sayılar aynı olmalı.");
+        if (useVisualActions && !ActionTemplatesReady())
+            throw new InvalidOperationException("Üç işlem görseli eksik. Önce işlem görsellerini kaydedin.");
+        if (!useVisualActions && windows.Any(window =>
+            !window.Click1RX.HasValue || !window.Click1RY.HasValue ||
+            !window.Click2RX.HasValue || !window.Click2RY.HasValue ||
+            !window.Click3RX.HasValue || !window.Click3RY.HasValue))
+            throw new InvalidOperationException("Üç işlem koordinatı tüm pencereler için kaydedilmemiş.");
+
+        for (int index = 0; index < windows.Count; index++)
+        {
+            status.Text = $"Giriş sonrası URL {index + 1}/{urls.Count} yükleniyor...";
+            await NavigateChromeWindowAsync(windows[index], urls[index]);
+            UpdateRow(index, "URL YÜKLENİYOR...", 0, Color.Khaki);
+        }
+
+        status.Text = $"Tüm URL'ler yüklendi. {pageReloadWaitSeconds} saniye bekleniyor...";
+        await Task.Delay(TimeSpan.FromSeconds(pageReloadWaitSeconds));
+
+        var failed = new List<int>();
+        for (int index = 0; index < windows.Count; index++)
+        {
+            try
+            {
+                status.Text = $"Pencere {index + 1}/{windows.Count}: 3 işlem uygulanıyor...";
+                if (useVisualActions)
+                    await PerformVisualActionsAsync(windows[index], CancellationToken.None);
+                else
+                    await PerformCoordinateActionsAsync(windows[index], CancellationToken.None);
+                UpdateRow(index, "GİRİŞ SONRASI İŞLEMLER TAMAM", 0, Color.Honeydew);
+            }
+            catch
+            {
+                failed.Add(index + 1);
+                UpdateRow(index, "GİRİŞ SONRASI İŞLEM HATASI", 0, Color.MistyRose);
+            }
+        }
+
+        if (failed.Count == 0)
+            ShowInfo("Giriş sonrası tüm URL'ler yenilendi ve 3 işlem tamamlandı.");
+        else
+            ShowWarning("Giriş sonrası bazı pencerelerde işlem tamamlanamadı: " + string.Join(", ", failed));
+    }
+
+    async Task NavigateChromeWindowAsync(ChromeWindow window, string url)
+    {
+        if (!await ActivateChromeWindowAsync(window.Handle))
+            throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
+        await Task.Delay(100);
+
+        IDataObject? previousClipboard = null;
+        try
+        {
+            if (Clipboard.ContainsData(DataFormats.UnicodeText))
+                previousClipboard = Clipboard.GetDataObject();
+            Clipboard.SetText(url, TextDataFormat.UnicodeText);
+            SendKeys.SendWait("^l");
+            await Task.Delay(80);
+            SendKeys.SendWait("^v");
+            SendKeys.SendWait("{ENTER}");
+            await Task.Delay(250);
+        }
+        finally
+        {
+            if (previousClipboard != null)
+            {
+                try { Clipboard.SetDataObject(previousClipboard, true); } catch { }
+            }
+        }
     }
 
     async Task FindAndSaveTelegramChatAsync()
@@ -662,7 +1118,7 @@ public class MainForm : Form
     {
         if (!TryGetSelectedWindow(out _, out int index)) return;
         telegramReportWindowNumber = index + 1;
-        telegramReportWindowLabel.Text = $"Rapor penceresi: {telegramReportWindowNumber}";
+        telegramReportWindowLabel.Text = $"Rapor penceresi: {telegramReportWindowNumber} (normal otomasyondan muaf)";
         SaveTelegramReportSettingsAndRestart();
         ShowInfo($"{telegramReportWindowNumber} numaralı Chrome penceresi Telegram raporu için seçildi.");
     }
@@ -728,7 +1184,7 @@ public class MainForm : Form
         try
         {
             await CreateAndSendTelegramReportAsync(CancellationToken.None);
-            ShowInfo("Bakiye ve ilk 7 kişilik puan listesi Telegram'a gönderildi.");
+            ShowInfo("Bakiye ve puan sıralaması Telegram'a gönderildi.");
         }
         catch (Exception ex)
         {
@@ -745,12 +1201,12 @@ public class MainForm : Form
         if (telegramReportInProgress)
             throw new InvalidOperationException("Başka bir Telegram raporu halen hazırlanıyor.");
 
-        if (windows.Count < telegramReportWindowNumber)
-            ScanWindows();
-        if (telegramReportWindowNumber < 1 || telegramReportWindowNumber > windows.Count)
+        ScanWindows();
+        int effectiveWindowNumber = telegramReportWindowNumber;
+        if (effectiveWindowNumber < 1 || effectiveWindowNumber > windows.Count)
             throw new InvalidOperationException($"{telegramReportWindowNumber} numaralı Chrome penceresi bulunamadı.");
 
-        ChromeWindow reportWindow = windows[telegramReportWindowNumber - 1];
+        ChromeWindow reportWindow = windows[effectiveWindowNumber - 1];
         if (!GetWindowRect(reportWindow.Handle, out RECT rect))
             throw new InvalidOperationException("Rapor penceresinin konumu okunamadı.");
 
@@ -762,11 +1218,10 @@ public class MainForm : Form
             throw new InvalidOperationException("Rapor penceresi çok küçük veya simge durumunda.");
 
         IntPtr previousWindow = GetForegroundWindow();
-        const int gameWidth = 293;
-        const int gameHeight = 187;
-        int gameLeft = reportWindow.X + (reportWindow.Width - gameWidth) / 2;
-        int gameTop = reportWindow.Y + 126;
+        RECT fullscreenRect = default;
         bool tournamentDialogOpened = false;
+        bool gameFullscreenOpened = false;
+        bool zoomRaised = false;
         telegramReportInProgress = true;
 
         try
@@ -775,50 +1230,91 @@ public class MainForm : Form
                 throw new InvalidOperationException("Rapor penceresi öne getirilemedi.");
             await Task.Delay(500, token);
 
-            using Bitmap gameImage = CaptureScreenArea(gameLeft, gameTop, gameWidth, gameHeight);
-            using Bitmap balanceImage = CropAndScale(
-                gameImage,
-                new System.Drawing.Rectangle(8, 122, 70, 62),
-                4);
+            status.Text = $"Rapor penceresi {effectiveWindowNumber}: Chrome sayfası yenileniyor...";
+            SendKeys.SendWait("^r");
+            await Task.Delay(TimeSpan.FromSeconds(pageReloadWaitSeconds), token);
 
-            await ClickScreenPointAsync(gameLeft + 10, gameTop + 134, token);
+            // Sayfa yenilemesi giriş ekranına götürdüyse oturuma müdahale etme;
+            // kullanıcı girişini bekle ve bu saatlik turu güvenle atla.
+            await WaitForGameToolbarAsync(reportWindow, token);
+            GameToolbar toolbar = await PrepareReportGameAsync(reportWindow, token);
+            await ClickScreenPointAsync(toolbar.Right - 36, toolbar.CenterY, token);
+            gameFullscreenOpened = true;
+            fullscreenRect = await WaitForGameFullscreenAsync(reportWindow, token);
+
+            ChangeChromeZoom(zoomIn: true);
+            zoomRaised = true;
+            await Task.Delay(800, token);
+
+            using Bitmap fullscreenGame = CaptureScreenArea(
+                fullscreenRect.Left,
+                fullscreenRect.Top,
+                fullscreenRect.Right - fullscreenRect.Left,
+                fullscreenRect.Bottom - fullscreenRect.Top);
+            if (!IsGameScreenReady(fullscreenGame))
+                throw new InvalidOperationException("Tam ekran oyun görüntüsü hazır değil.");
+
+            decimal balance = gameReportOcrService.ReadBalance(fullscreenGame);
+
+            int fullscreenWidth = fullscreenRect.Right - fullscreenRect.Left;
+            int fullscreenHeight = fullscreenRect.Bottom - fullscreenRect.Top;
+            await ClickScreenPointAsync(
+                fullscreenRect.Left + (int)Math.Round(fullscreenWidth * .038),
+                fullscreenRect.Top + (int)Math.Round(fullscreenHeight * .687),
+                token);
             await Task.Delay(900, token);
-            using (Bitmap dialogCheck = CaptureScreenArea(gameLeft, gameTop, gameWidth, gameHeight))
+            using (Bitmap dialogCheck = CaptureScreenArea(
+                fullscreenRect.Left,
+                fullscreenRect.Top,
+                fullscreenWidth,
+                fullscreenHeight))
             {
-                if (!IsTournamentDialogVisible(dialogCheck))
+                if (!IsFullscreenTournamentDialogVisible(dialogCheck))
                     throw new InvalidOperationException("Kupa tıklamasından sonra Turnuvalar penceresi açılamadı.");
             }
             tournamentDialogOpened = true;
-            await ClickScreenPointAsync(gameLeft + 163, gameTop + 127, token);
+
+            await ClickScreenPointAsync(
+                fullscreenRect.Left + (int)Math.Round(fullscreenWidth * .535),
+                fullscreenRect.Top + (int)Math.Round(fullscreenHeight * .327),
+                token);
             await Task.Delay(700, token);
 
-            // Listenin yaklaşık 20 px sağ dışından kaydır. Böylece iç liste değil,
-            // turnuva penceresi hareket eder ve ilk 7 kişi birlikte görünür.
-            SetCursorPos(gameLeft + 249, gameTop + 144);
-            mouse_event(MOUSEEVENTF_WHEEL, 0, 0, unchecked((uint)-120), UIntPtr.Zero);
-            await Task.Delay(900, token);
+            // Tam ekranda liste kaydırılmadan ilk 10 sıra sayısal olarak okunur.
+            using Bitmap fullscreenRankings = CaptureScreenArea(
+                fullscreenRect.Left,
+                fullscreenRect.Top,
+                fullscreenWidth,
+                fullscreenHeight);
+            IReadOnlyList<long> scores = gameReportOcrService.ReadTopTen(fullscreenRankings);
+            GameReportSnapshot? previous = gameReportHistoryService.Load();
+            var current = new GameReportSnapshot
+            {
+                CapturedAt = DateTime.Now,
+                Balance = balance,
+                Scores = scores.ToList()
+            };
 
-            using Bitmap rankingImage = CaptureScreenArea(gameLeft, gameTop, gameWidth, gameHeight);
-            using Bitmap reportImage = BuildTelegramReportImage(balanceImage, rankingImage);
-            using var stream = new MemoryStream();
-            reportImage.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
-            stream.Position = 0;
-
-            await telegramService.SendPhotoAsync(
+            await telegramService.SendMessageAsync(
                 telegramTokenBox.Text,
                 telegramChatIdBox.Text,
-                stream,
-                $"otobot-rapor-{DateTime.Now:yyyyMMdd-HHmmss}.png",
-                $"Otobot raporu • Pencere {telegramReportWindowNumber} • {DateTime.Now:dd.MM.yyyy HH:mm:ss}",
+                BuildTelegramRankingMessage(effectiveWindowNumber, current, previous),
                 token);
+            gameReportHistoryService.Save(current);
         }
         finally
         {
             if (tournamentDialogOpened && IsWindow(reportWindow.Handle))
             {
-                SetCursorPos(gameLeft + 280, gameTop + 32);
-                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
-                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+                await ClickScreenPointAsync(fullscreenRect.Right - 44, fullscreenRect.Top + 33, CancellationToken.None);
+            }
+            if (zoomRaised)
+                ChangeChromeZoom(zoomIn: false);
+            if (gameFullscreenOpened && IsWindow(reportWindow.Handle))
+            {
+                SetForegroundWindow(reportWindow.Handle);
+                SendKeys.SendWait("{ESC}");
+                await Task.Delay(350);
             }
             if (previousWindow != IntPtr.Zero && IsWindow(previousWindow))
                 SetForegroundWindow(previousWindow);
@@ -826,23 +1322,201 @@ public class MainForm : Form
         }
     }
 
-    static bool IsTournamentDialogVisible(Bitmap image)
+    static string BuildTelegramRankingMessage(
+        int windowNumber,
+        GameReportSnapshot current,
+        GameReportSnapshot? previous)
+    {
+        var message = new StringBuilder();
+        message.AppendLine("OTOBOT SAATLİK RAPOR");
+        message.AppendLine($"Pencere: {windowNumber} | {current.CapturedAt:dd.MM.yyyy HH:mm}");
+        string balanceChange = previous == null ? "ilk kayıt" : FormatDifference(current.Balance - previous.Balance);
+        message.AppendLine($"Bakiye: {current.Balance:N2} TRY ({balanceChange})");
+        message.AppendLine();
+        message.AppendLine("Sıra | Puan | 1 saatlik fark");
+        for (int i = 0; i < current.Scores.Count; i++)
+        {
+            string change = previous?.Scores.Count > i
+                ? FormatDifference(current.Scores[i] - previous.Scores[i])
+                : "ilk kayıt";
+            message.AppendLine($"{i + 1,2} | {current.Scores[i]:N0} | {change}");
+        }
+        return message.ToString().TrimEnd();
+    }
+
+    static string FormatDifference(decimal difference) =>
+        difference > 0 ? $"+{difference:N2}" : difference.ToString("N2");
+
+    static string FormatDifference(long difference) =>
+        difference > 0 ? $"+{difference:N0}" : difference.ToString("N0");
+
+    async Task<GameToolbar> PrepareReportGameAsync(
+        ChromeWindow reportWindow,
+        CancellationToken token)
+    {
+        if (closeButtonTemplate == null || closeButtonTemplate.Empty())
+            LoadTemplate();
+        if (closeButtonTemplate == null || closeButtonTemplate.Empty())
+            throw new InvalidOperationException("KAPAT uyarısı görseli yüklenemedi.");
+
+        GameToolbar toolbar = FindGameToolbar(reportWindow);
+        double threshold = (double)thresholdBox.Value;
+        var match = FindCloseButton(reportWindow, threshold);
+        if (!match.Found) return toolbar;
+
+        status.Text =
+            $"Rapor öncesi KAPAT uyarısı bulundu ({match.Score:P1}); " +
+            "oyun yenileniyor ve 30 saniye beklenecek...";
+
+        // KAPAT düğmesine dokunma. Oyun panelinin üst kırmızı şeridindeki
+        // dairesel yenileme simgesine tıkla.
+        await ClickScreenPointAsync(toolbar.Right - 23, toolbar.CenterY, token);
+        await Task.Delay(TimeSpan.FromSeconds(30), token);
+
+        var remaining = FindCloseButton(reportWindow, threshold);
+        if (remaining.Found)
+            throw new InvalidOperationException(
+                $"Oyun yenilenip 30 saniye beklendiği halde KAPAT uyarısı devam ediyor " +
+                $"({remaining.Score:P1}). Rapor bu döngüde atlandı.");
+
+        status.Text = "Oyun yenilendi; tam ekran raporuna geçiliyor...";
+        return await WaitForGameToolbarAsync(reportWindow, token);
+    }
+
+    GameToolbar FindGameToolbar(ChromeWindow window)
+    {
+        using Bitmap image = CaptureScreenArea(window.X, window.Y, window.Width, window.Height);
+        int bestY = -1;
+        int bestFirstX = 0;
+        int bestLastX = 0;
+        int bestCount = 0;
+        int startY = Math.Min(95, image.Height - 1);
+        int endY = Math.Min(image.Height - 1, 205);
+
+        for (int y = startY; y <= endY; y++)
+        {
+            int count = 0;
+            int firstX = -1;
+            int lastX = -1;
+            for (int x = 0; x < image.Width; x++)
+            {
+                Color pixel = image.GetPixel(x, y);
+                if (pixel.R < 165 || pixel.G > 85 || pixel.B > 100) continue;
+                if (firstX < 0) firstX = x;
+                lastX = x;
+                count++;
+            }
+
+            if (firstX < 0 || lastX - firstX < 220 || count <= bestCount) continue;
+            bestY = y;
+            bestFirstX = firstX;
+            bestLastX = lastX;
+            bestCount = count;
+        }
+
+        if (bestY < 0)
+            throw new InvalidOperationException("Oyunun üst kırmızı araç çubuğu bulunamadı.");
+
+        int top = bestY;
+        while (top > startY &&
+               CountToolbarRedPixels(image, top - 1, bestFirstX, bestLastX) >= bestCount * .45)
+            top--;
+        int bottom = bestY;
+        while (bottom < endY &&
+               CountToolbarRedPixels(image, bottom + 1, bestFirstX, bestLastX) >= bestCount * .45)
+            bottom++;
+
+        return new GameToolbar(
+            window.X + bestFirstX,
+            window.X + bestLastX,
+            window.Y + top,
+            window.Y + bottom);
+    }
+
+    static int CountToolbarRedPixels(Bitmap image, int y, int left, int right)
+    {
+        int count = 0;
+        for (int x = left; x <= right; x++)
+        {
+            Color pixel = image.GetPixel(x, y);
+            if (pixel.R >= 165 && pixel.G <= 85 && pixel.B <= 100)
+                count++;
+        }
+        return count;
+    }
+
+    async Task<GameToolbar> WaitForGameToolbarAsync(ChromeWindow window, CancellationToken token)
+    {
+        for (int attempt = 0; attempt < 15; attempt++)
+        {
+            try { return FindGameToolbar(window); }
+            catch (InvalidOperationException) when (attempt < 14)
+            {
+                await Task.Delay(2000, token);
+            }
+        }
+        throw new InvalidOperationException("Oyun yenilemeden sonra 30 saniye içinde yüklenmedi.");
+    }
+
+    async Task<RECT> WaitForGameFullscreenAsync(ChromeWindow window, CancellationToken token)
+    {
+        for (int attempt = 0; attempt < 15; attempt++)
+        {
+            if (GetWindowRect(window.Handle, out RECT rect) &&
+                rect.Right - rect.Left >= 1000 &&
+                rect.Bottom - rect.Top >= 700)
+                return rect;
+
+            await Task.Delay(200, token);
+        }
+        throw new InvalidOperationException("Oyun tam ekran moduna geçemedi.");
+    }
+
+    static void ChangeChromeZoom(bool zoomIn)
+    {
+        string keys = zoomIn ? "^{+}" : "^-";
+        for (int step = 0; step < 3; step++)
+        {
+            SendKeys.SendWait(keys);
+            Thread.Sleep(120);
+        }
+    }
+
+    static bool IsFullscreenTournamentDialogVisible(Bitmap image)
     {
         int darkPixels = 0;
         int sampledPixels = 0;
-        int maxX = Math.Min(image.Width - 1, 275);
-        int maxY = Math.Min(image.Height - 1, 100);
-        for (int y = 35; y <= maxY; y++)
+        int left = (int)(image.Width * .25);
+        int right = (int)(image.Width * .75);
+        int bottom = (int)(image.Height * .92);
+        for (int y = 20; y < bottom; y += 4)
         {
-            for (int x = 15; x <= maxX; x++)
+            for (int x = left; x < right; x += 4)
             {
                 Color pixel = image.GetPixel(x, y);
                 sampledPixels++;
-                if (pixel.R < 80 && pixel.G < 80 && pixel.B < 80)
+                if (pixel.R < 70 && pixel.G < 70 && pixel.B < 70)
                     darkPixels++;
             }
         }
-        return sampledPixels > 0 && darkPixels / (double)sampledPixels >= .80;
+        return sampledPixels > 0 && darkPixels / (double)sampledPixels >= .55;
+    }
+
+    static bool IsGameScreenReady(Bitmap image)
+    {
+        int visiblePixels = 0;
+        int sampledPixels = 0;
+        for (int y = 0; y < image.Height; y += 3)
+        {
+            for (int x = 0; x < image.Width; x += 3)
+            {
+                Color pixel = image.GetPixel(x, y);
+                sampledPixels++;
+                if (pixel.R > 28 || pixel.G > 28 || pixel.B > 28)
+                    visiblePixels++;
+            }
+        }
+        return sampledPixels > 0 && visiblePixels / (double)sampledPixels >= .18;
     }
 
     static async Task ClickScreenPointAsync(int x, int y, CancellationToken token)
@@ -853,32 +1527,35 @@ public class MainForm : Form
         mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
     }
 
-    static Bitmap CropAndScale(Bitmap source, System.Drawing.Rectangle area, int scale)
+    static System.Drawing.Rectangle RelativeRectangle(
+        Bitmap source,
+        double x,
+        double y,
+        double width,
+        double height) => new(
+            (int)Math.Round(source.Width * x),
+            (int)Math.Round(source.Height * y),
+            (int)Math.Round(source.Width * width),
+            (int)Math.Round(source.Height * height));
+
+    static Bitmap CropBitmap(Bitmap source, System.Drawing.Rectangle area)
     {
         var clipped = System.Drawing.Rectangle.Intersect(
             new System.Drawing.Rectangle(0, 0, source.Width, source.Height), area);
         if (clipped.Width <= 0 || clipped.Height <= 0)
             throw new InvalidOperationException("Rapor görüntü alanı hesaplanamadı.");
 
-        using Bitmap crop = source.Clone(clipped, source.PixelFormat);
-        var result = new Bitmap(crop.Width * scale, crop.Height * scale);
-        using Graphics graphics = Graphics.FromImage(result);
-        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
-        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
-        graphics.DrawImage(crop, 0, 0, result.Width, result.Height);
-        return result;
+        return source.Clone(clipped, source.PixelFormat);
     }
 
     static Bitmap BuildTelegramReportImage(Bitmap balance, Bitmap rankings)
     {
-        const int width = 920;
         const int padding = 20;
         const int headerHeight = 58;
         const int sectionLabelHeight = 34;
-        int rankingWidth = rankings.Width * 3;
-        int rankingHeight = rankings.Height * 3;
+        int width = Math.Max(1000, rankings.Width + padding * 2);
         int height = headerHeight + sectionLabelHeight + balance.Height +
-            sectionLabelHeight + rankingHeight + padding * 3;
+            sectionLabelHeight + rankings.Height + padding * 3;
         var result = new Bitmap(width, height);
         using Graphics graphics = Graphics.FromImage(result);
         graphics.Clear(Color.FromArgb(24, 24, 27));
@@ -893,12 +1570,15 @@ public class MainForm : Form
         y += sectionLabelHeight;
         graphics.DrawImage(balance, padding, y, balance.Width, balance.Height);
         y += balance.Height + padding;
-        graphics.DrawString("PUAN SIRALAMASI — İLK 7", labelFont, yellowBrush, padding, y);
+        graphics.DrawString("PUAN SIRALAMASI", labelFont, yellowBrush, padding, y);
         y += sectionLabelHeight;
-        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
-        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
-        graphics.DrawImage(rankings, padding, y, rankingWidth, rankingHeight);
+        graphics.DrawImageUnscaled(rankings, padding, y);
         return result;
+    }
+
+    readonly record struct GameToolbar(int Left, int Right, int Top, int Bottom)
+    {
+        public int CenterY => Top + Math.Max(1, Bottom - Top) / 2;
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -1827,8 +2507,9 @@ public class MainForm : Form
         try
         {
             ShowWindow(w.Handle, SW_RESTORE);
-            SetForegroundWindow(w.Handle);
-            await Task.Delay(250);
+            if (!await ActivateChromeWindowAsync(w.Handle))
+                return "";
+            await Task.Delay(350);
 
             // v4.11.1'de çalışan URL okuma yöntemi birebir korunuyor.
             SendKeys.SendWait("^l");
@@ -1996,9 +2677,12 @@ public class MainForm : Form
     {
         try
         {
+            // Kaydetme anındaki tüm Chrome pencerelerini kullan. Önceki tarama
+            // listesi sonradan açılan pencereleri içermeyebilir.
+            ScanWindows();
             if (windows.Count == 0)
             {
-                ShowWarning("Önce Chrome Pencerelerini Tara ile pencereleri listeleyin.");
+                ShowWarning("Kaydedilecek açık Chrome penceresi bulunamadı.");
                 return;
             }
 
@@ -2009,7 +2693,12 @@ public class MainForm : Form
             {
                 var w = windows[i];
                 status.Text = $"Pencere {i + 1}/{windows.Count} URL kaydediliyor...";
-                string url = (await GetChromeUrlAsync(w)).Trim();
+                string url = string.Empty;
+                for (int attempt = 0; attempt < 3 && !IsValidHttpUrl(url); attempt++)
+                {
+                    url = (await GetChromeUrlAsync(w)).Trim();
+                    if (!IsValidHttpUrl(url)) await Task.Delay(300);
+                }
                 w.Url = IsValidHttpUrl(url) ? url : "";
                 records.Add(new SessionRecord
                 {
@@ -2030,9 +2719,19 @@ public class MainForm : Form
             File.WriteAllText(sessionFile,
                 JsonSerializer.Serialize(records, new JsonSerializerOptions { WriteIndented = true }));
 
+            int unreadUrlCount = records.Count(record => string.IsNullOrWhiteSpace(record.Url));
+            if (unreadUrlCount == 0)
+                SaveUrlsToUrlList(records);
+            else
+                ShowWarning(
+                    $"{unreadUrlCount} Chrome penceresinin URL'si okunamadı; eksik liste kaydedilmedi. " +
+                    "Pencereleri Kaydet düğmesine tekrar basın.");
+
             // Koordinatları da ayrıca güncel tut.
             SaveCoordinates();
-            status.Text = $"{records.Count} Chrome penceresi oturum olarak kaydedildi.";
+            status.Text = unreadUrlCount == 0
+                ? $"{records.Count} Chrome penceresi ve URL Listesi kaydedildi."
+                : $"{records.Count - unreadUrlCount}/{records.Count} Chrome URL'si kaydedildi.";
         }
         catch (Exception ex)
         {
@@ -2042,6 +2741,41 @@ public class MainForm : Form
         {
             saveSessionButton.Enabled = true;
         }
+    }
+
+    void SaveUrlsToUrlList(IEnumerable<SessionRecord> records)
+    {
+        var urls = records
+            .Select(record => Uri.TryCreate(record.Url, UriKind.Absolute, out Uri? uri) ? uri : null)
+            .Where(uri => uri != null && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            .Cast<Uri>()
+            .ToList();
+        if (urls.Count == 0) return;
+
+        string baseAddress = urls
+            .GroupBy(uri => uri.GetLeftPart(UriPartial.Authority), StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .First()
+            .Key;
+        List<string> remainders = urls
+            .Where(uri => string.Equals(uri.GetLeftPart(UriPartial.Authority), baseAddress, StringComparison.OrdinalIgnoreCase))
+            .Select(uri => uri.PathAndQuery + uri.Fragment)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (remainders.Count == 0) return;
+
+        var settings = new UrlListSettings
+        {
+            BaseAddress = baseAddress,
+            Remainders = remainders
+        };
+        urlListService.Save(settings);
+
+        urlListLoading = true;
+        try { ApplyUrlList(urlListService.Load()); }
+        finally { urlListLoading = false; }
+        RefreshUrlListPreviews();
     }
 
     List<SessionRecord> LoadSessionRecords()
@@ -2260,17 +2994,40 @@ public class MainForm : Form
     {
         if (closeButtonTemplate == null) { LoadTemplate(); if (closeButtonTemplate == null) return; } if (windows.Count == 0) { ScanWindows(); if (windows.Count == 0) return; }
         double threshold = (double)thresholdBox.Value; int errors = 0;
-        for (int i = 0; i < windows.Count; i++) { var r = FindError(windows[i], threshold); if (r.Found) errors++; UpdateRow(i, r.Found ? "HATA BULUNDU" : "Normal", r.Score, r.Found ? Color.MistyRose : Color.Honeydew); }
-        status.Text = $"Tarama tamamlandı. {errors} pencerede hata bulundu.";
+        for (int i = 0; i < windows.Count; i++)
+        {
+            if (IsTelegramReportWindow(i))
+            {
+                UpdateRow(i, "RAPOR PENCERESİ — MUAF", 0, Color.Lavender);
+                continue;
+            }
+            var r = FindError(windows[i], threshold);
+            if (r.Found) errors++;
+            UpdateRow(i, r.Found ? "HATA BULUNDU" : "Normal", r.Score, r.Found ? Color.MistyRose : Color.Honeydew);
+        }
+        status.Text = $"Tarama tamamlandı. {errors} pencerede hata bulundu; rapor penceresi muaf tutuldu.";
     }
+
+    bool IsTelegramReportWindow(int index) =>
+        telegramReportWindowNumber > 0 && index == telegramReportWindowNumber - 1;
 
     (bool Found, double Score) FindError(ChromeWindow w, double threshold)
     {
+        var match = FindCloseButton(w, threshold);
+        return (match.Found, match.Score);
+    }
+
+    (bool Found, double Score, int ScreenX, int ScreenY) FindCloseButton(
+        ChromeWindow w,
+        double threshold)
+    {
         double bestScore = 0;
+        int bestScreenX = 0;
+        int bestScreenY = 0;
         try
         {
             if (closeButtonTemplate == null || closeButtonTemplate.Empty())
-                return (false, 0);
+                return (false, 0, 0, 0);
 
             using var bmp = CaptureScreenArea(w.X, w.Y, w.Width, w.Height);
             using var screenColor = BitmapConverter.ToMat(bmp);
@@ -2294,13 +3051,22 @@ public class MainForm : Form
                 Cv2.Resize(templateGray, scaled, new OpenCvSharp.Size(tw, th), 0, 0, InterpolationFlags.Linear);
                 using var result = new Mat();
                 Cv2.MatchTemplate(screen, scaled, result, TemplateMatchModes.CCoeffNormed);
-                Cv2.MinMaxLoc(result, out _, out double maxValue, out _, out _);
-                if (maxValue > bestScore) bestScore = maxValue;
+                Cv2.MinMaxLoc(result, out _, out double maxValue, out _, out OpenCvSharp.Point location);
+                if (maxValue <= bestScore) continue;
+
+                bestScore = maxValue;
+                bestScreenX = w.X + location.X + tw / 2;
+                bestScreenY = w.Y + location.Y + th / 2;
             }
         }
-        catch { bestScore = 0; }
+        catch
+        {
+            bestScore = 0;
+            bestScreenX = 0;
+            bestScreenY = 0;
+        }
 
-        return (bestScore >= threshold, bestScore);
+        return (bestScore >= threshold, bestScore, bestScreenX, bestScreenY);
     }
 
     void UpdateRow(int index, string state, double score, Color color)
@@ -2420,7 +3186,9 @@ public class MainForm : Form
     }
 
 
-    bool CoordinatesReady() => windows.Count > 0 && windows.All(w => w.RefreshRX.HasValue && w.RefreshRY.HasValue);
+    bool CoordinatesReady() => windows.Select((w, index) => new { w, index })
+        .Where(item => !IsTelegramReportWindow(item.index))
+        .All(item => item.w.RefreshRX.HasValue && item.w.RefreshRY.HasValue);
 
     bool EnsureRefreshMethodReady()
     {
@@ -2433,7 +3201,8 @@ public class MainForm : Form
 
         if (CoordinatesReady()) return true;
         var missing = windows.Select((w, index) => new { w, index })
-            .Where(item => !item.w.RefreshRX.HasValue || !item.w.RefreshRY.HasValue)
+            .Where(item => !IsTelegramReportWindow(item.index) &&
+                (!item.w.RefreshRX.HasValue || !item.w.RefreshRY.HasValue))
             .Select(item => item.index + 1);
         ShowWarning(
             "Yenileme koordinatı eksik olan pencereler: " + string.Join(", ", missing));
@@ -2442,10 +3211,12 @@ public class MainForm : Form
 
     bool ActionTemplatesReady() => actionButtonTemplates.All(template => template != null);
 
-    bool ActionCoordinatesReady() => windows.All(w =>
-        w.Click1RX.HasValue && w.Click1RY.HasValue &&
-        w.Click2RX.HasValue && w.Click2RY.HasValue &&
-        w.Click3RX.HasValue && w.Click3RY.HasValue);
+    bool ActionCoordinatesReady() => windows.Select((w, index) => new { w, index })
+        .Where(item => !IsTelegramReportWindow(item.index))
+        .All(item =>
+            item.w.Click1RX.HasValue && item.w.Click1RY.HasValue &&
+            item.w.Click2RX.HasValue && item.w.Click2RY.HasValue &&
+            item.w.Click3RX.HasValue && item.w.Click3RY.HasValue);
 
     async Task TestRefreshTemplateAsync()
     {
@@ -2576,10 +3347,10 @@ public class MainForm : Form
         if (!useVisualActions && !ActionCoordinatesReady())
         {
             var missing = windows.Select((w, index) => new { w, index })
-                .Where(item =>
-                    !item.w.Click1RX.HasValue || !item.w.Click1RY.HasValue ||
+                .Where(item => !IsTelegramReportWindow(item.index) &&
+                    (!item.w.Click1RX.HasValue || !item.w.Click1RY.HasValue ||
                     !item.w.Click2RX.HasValue || !item.w.Click2RY.HasValue ||
-                    !item.w.Click3RX.HasValue || !item.w.Click3RY.HasValue)
+                    !item.w.Click3RX.HasValue || !item.w.Click3RY.HasValue))
                 .Select(item => item.index + 1);
             ShowWarning(
                 "Üç işlem koordinatı eksik olan pencereler: " + string.Join(", ", missing));
@@ -2810,7 +3581,8 @@ public class MainForm : Form
                 var errors = new List<int>();
                 for (int i = 0; i < windows.Count; i++)
                 {
-                    if (grid.Rows[i].Cells["Hata Durumu"].Value?.ToString() == "HATA BULUNDU")
+                    if (!IsTelegramReportWindow(i) &&
+                        grid.Rows[i].Cells["Hata Durumu"].Value?.ToString() == "HATA BULUNDU")
                         errors.Add(i);
                 }
 
@@ -2896,7 +3668,17 @@ public class MainForm : Form
         try
         {
             ScanWindows(); if (windows.Count == 0 || !EnsureRefreshMethodReady()) return;
-            for (int i = 0; i < windows.Count; i++) { await ClickRefreshAsync(windows[i], CancellationToken.None); UpdateRow(i, "YENİLENİYOR...", 0, Color.Khaki); await Task.Delay(300); }
+            for (int i = 0; i < windows.Count; i++)
+            {
+                if (IsTelegramReportWindow(i))
+                {
+                    UpdateRow(i, "RAPOR PENCERESİ — MUAF", 0, Color.Lavender);
+                    continue;
+                }
+                await ClickRefreshAsync(windows[i], CancellationToken.None);
+                UpdateRow(i, "YENİLENİYOR...", 0, Color.Khaki);
+                await Task.Delay(300);
+            }
             status.Text = $"Tüm sayfalar yenilendi. {pageReloadWaitSeconds} saniye bekleniyor..."; await Task.Delay(pageReloadWaitSeconds * 1000); DetectErrors();
         }
         catch (Exception ex) { ShowWarning("Yenileme hatası:\n" + ex.Message); }
@@ -2909,7 +3691,17 @@ public class MainForm : Form
             if (closeButtonTemplate == null) { LoadTemplate(); if (closeButtonTemplate == null) return; }
             ScanWindows(); if (windows.Count == 0 || !EnsureRefreshMethodReady()) return;
             double threshold = (double)thresholdBox.Value; var errors = new List<int>();
-            for (int i = 0; i < windows.Count; i++) { var r = FindError(windows[i], threshold); UpdateRow(i, r.Found ? "HATA BULUNDU" : "Normal", r.Score, r.Found ? Color.MistyRose : Color.Honeydew); if (r.Found) errors.Add(i); }
+            for (int i = 0; i < windows.Count; i++)
+            {
+                if (IsTelegramReportWindow(i))
+                {
+                    UpdateRow(i, "RAPOR PENCERESİ — MUAF", 0, Color.Lavender);
+                    continue;
+                }
+                var r = FindError(windows[i], threshold);
+                UpdateRow(i, r.Found ? "HATA BULUNDU" : "Normal", r.Score, r.Found ? Color.MistyRose : Color.Honeydew);
+                if (r.Found) errors.Add(i);
+            }
             foreach (int i in errors) { await ClickRefreshAsync(windows[i], CancellationToken.None); UpdateRow(i, "YENİLENİYOR...", 0, Color.Khaki); await Task.Delay(300); }
             await Task.Delay(pageReloadWaitSeconds * 1000); DetectErrors();
         }

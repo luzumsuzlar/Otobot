@@ -126,6 +126,30 @@ internal sealed class TelegramService
         await EnsureTelegramSuccessAsync(response, cancellationToken);
     }
 
+    public async Task SendDocumentAsync(
+        string token,
+        string chatId,
+        Stream document,
+        string fileName,
+        string caption,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateToken(token);
+        if (string.IsNullOrWhiteSpace(chatId))
+            throw new InvalidOperationException("Önce SOHBETİ BUL VE KAYDET düğmesini kullanın.");
+
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent(chatId.Trim()), "chat_id");
+        content.Add(new StringContent(caption), "caption");
+        using var documentContent = new StreamContent(document);
+        documentContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+        content.Add(documentContent, "document", fileName);
+
+        using HttpResponseMessage response = await Http.PostAsync(
+            BuildEndpoint(token, "sendDocument"), content, cancellationToken);
+        await EnsureTelegramSuccessAsync(response, cancellationToken);
+    }
+
     private static async Task<JsonDocument> GetApiResponseAsync(
         string token,
         string method,
@@ -239,7 +263,7 @@ internal sealed class TelegramService
         public string ProtectedToken { get; set; } = string.Empty;
         public string ChatId { get; set; } = string.Empty;
         public int ReportWindowNumber { get; set; } = 3;
-        public int ReportIntervalMinutes { get; set; } = 30;
+        public int ReportIntervalMinutes { get; set; } = 60;
         public bool ReportsEnabled { get; set; }
     }
 }
@@ -249,7 +273,7 @@ internal sealed class TelegramSettings
     public string Token { get; set; } = string.Empty;
     public string ChatId { get; set; } = string.Empty;
     public int ReportWindowNumber { get; set; } = 3;
-    public int ReportIntervalMinutes { get; set; } = 30;
+    public int ReportIntervalMinutes { get; set; } = 60;
     public bool ReportsEnabled { get; set; }
 }
 
