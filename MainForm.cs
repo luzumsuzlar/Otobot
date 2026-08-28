@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Windows.Automation;
 
 namespace Otobot;
 
@@ -26,9 +27,11 @@ public class MainForm : Form
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll", SetLastError = true)] static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll")] static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint vk);
@@ -78,34 +81,19 @@ public class MainForm : Form
     readonly Button detectButton = new();
     readonly Button errorRefreshButton = new();
     readonly Button refreshAllButton = new();
-    readonly Button captureRefreshVisualButton = new();
-    readonly Button testRefreshVisualButton = new();
-    readonly Button saveCoordButton = new();
     readonly Button captureClickButton = new();
-    readonly Button captureCoordButton = new();
     readonly Button startButton = new();
     readonly Button stopButton = new();
     readonly Button saveSessionButton = new();
     readonly Button restoreSelectedButton = new();
     readonly Button restoreAllButton = new();
     readonly NumericUpDown thresholdBox = new();
-    readonly NumericUpDown refreshTemplateThresholdBox = new();
     readonly NumericUpDown actionTemplateThresholdBox = new();
     readonly TextBox oldDomainBox = new();
     readonly TextBox newDomainBox = new();
     readonly Button replaceDomainButton = new();
     readonly Button checkUpdateButton = new();
     readonly CheckBox useVisualActionsCheckBox = new();
-    readonly TextBox telegramTokenBox = new();
-    readonly TextBox telegramChatIdBox = new();
-    readonly Button findTelegramChatButton = new();
-    readonly Button testTelegramButton = new();
-    readonly Button selectTelegramReportWindowButton = new();
-    readonly Button sendTelegramReportNowButton = new();
-    readonly Label telegramReportWindowLabel = new();
-    readonly NumericUpDown telegramReportIntervalBox = new();
-    readonly CheckBox enableTelegramReportsCheckBox = new();
-    readonly TelegramService telegramService = new();
     readonly TextBox gmailAddressBox = new();
     readonly TextBox gmailAppPasswordBox = new();
     readonly TextBox gmailExpectedSenderBox = new();
@@ -118,8 +106,6 @@ public class MainForm : Form
     readonly Button saveUrlListButton = new();
     readonly Button addUrlListRowButton = new();
     readonly UrlListService urlListService = new();
-    readonly GameReportOcrService gameReportOcrService = new();
-    readonly GameReportHistoryService gameReportHistoryService = new();
 
     readonly List<ChromeWindow> windows = new();
     readonly string coordFile = AppDataPaths.GetDataFilePath("refresh_coordinates.json");
@@ -127,6 +113,8 @@ public class MainForm : Form
     Mat? closeButtonTemplate;
     Mat? refreshButtonTemplate;
     VisualTemplateDefinition refreshTemplateDefinition = new();
+    Mat? fullscreenButtonTemplate;
+    VisualTemplateDefinition fullscreenTemplateDefinition = new();
     readonly Mat?[] actionButtonTemplates = new Mat?[3];
     VisualTemplateDefinition[] actionTemplateDefinitions =
     [
@@ -137,12 +125,7 @@ public class MainForm : Form
     int scanIntervalSeconds = 60;
     int actionClickDelayMs = 500;
     bool useVisualActions = true;
-    int telegramReportWindowNumber = 3;
-    int telegramReportIntervalMinutes = 60;
-    bool telegramSettingsLoading;
     bool urlListLoading;
-    bool telegramReportInProgress;
-    CancellationTokenSource? telegramReportCts;
 
     int selectedClickNumber = 1;
     IntPtr keyboardHook = IntPtr.Zero;
@@ -158,6 +141,7 @@ public class MainForm : Form
     int pendingActionCaptureNumber = 0;
     bool pendingActionCaptureUsesVisual = true;
     bool pendingRefreshTemplateCapture = false;
+    bool pendingFullscreenTemplateCapture = false;
     bool suppressActionCaptureMouseDown = false;
 
     const int RefreshTemplateWidth = 74;
@@ -172,6 +156,8 @@ public class MainForm : Form
     readonly Button captureClick2Button = new();
     readonly Button captureClick3Button = new();
     readonly Button testActionVisualsButton = new();
+    readonly Button captureFullscreenVisualButton = new();
+    readonly Button testFullscreenVisualButton = new();
 
     public MainForm()
     {
@@ -192,16 +178,12 @@ public class MainForm : Form
         stopButton.AutoSize = true;
         stopButton.Click += (_, _) => StopContinuousScan();
 
-        captureCoordButton.Text = "Mouse Konumunu Ata (F8)"; captureCoordButton.AutoSize = true; captureCoordButton.Click += (_, _) => CaptureCurrentMousePosition();
-        saveCoordButton.Text = "Koordinatları Kaydet"; saveCoordButton.AutoSize = true; saveCoordButton.Click += (_, _) => SaveCoordinates();
-
-        captureRefreshVisualButton.Text = "Yenileme Görselini Kaydet (F8)";
-        captureRefreshVisualButton.AutoSize = true;
-        captureRefreshVisualButton.Click += (_, _) => BeginCaptureRefreshTemplate();
-
-        testRefreshVisualButton.Text = "YENİLEME GÖRSELİNİ TEST ET";
-        testRefreshVisualButton.AutoSize = true;
-        testRefreshVisualButton.Click += async (_, _) => await TestRefreshTemplateAsync();
+        captureFullscreenVisualButton.Text = "TAM EKRAN GÖRSELİNİ KAYDET";
+        captureFullscreenVisualButton.AutoSize = true;
+        captureFullscreenVisualButton.Click += (_, _) => BeginCaptureFullscreenTemplate();
+        testFullscreenVisualButton.Text = "TAM EKRAN GÖRSELİNİ TEST ET";
+        testFullscreenVisualButton.AutoSize = true;
+        testFullscreenVisualButton.Click += async (_, _) => await TestFullscreenTemplateAsync();
 
         captureClickButton.Text = "Sıradaki İşlem Görselini Kaydet (F9)";
         captureClickButton.AutoSize = true;
@@ -225,14 +207,6 @@ public class MainForm : Form
         thresholdBox.Increment = .01m;
         thresholdBox.Value = .80m;
         thresholdBox.Width = 75;
-
-        refreshTemplateThresholdBox.DecimalPlaces = 2;
-        refreshTemplateThresholdBox.Minimum = .50m;
-        refreshTemplateThresholdBox.Maximum = .99m;
-        refreshTemplateThresholdBox.Increment = .01m;
-        refreshTemplateThresholdBox.Value = .72m;
-        refreshTemplateThresholdBox.Width = 75;
-        refreshTemplateThresholdBox.ValueChanged += (_, _) => SaveTimingSettings();
 
         actionTemplateThresholdBox.DecimalPlaces = 2;
         actionTemplateThresholdBox.Minimum = .50m;
@@ -285,17 +259,8 @@ public class MainForm : Form
             SaveTimingSettings();
         };
 
-        captureCoordButton.Text = "Yenileme Koordinatı (F8)";
-        captureCoordButton.AutoSize = true;
         captureClickButton.Text = "Sıradaki İşlem Görselini Kaydet (F9)";
         captureClickButton.AutoSize = true;
-        saveCoordButton.Text = "Yenileme Koordinatlarını Kaydet";
-        saveCoordButton.AutoSize = true;
-
-        autoCoordinateButton.Text = "⚡ YENİLEME NOKTALARINI TOPLA";
-        autoCoordinateButton.AutoSize = true;
-        autoCoordinateButton.Font = new Font(Font.FontFamily, 9, FontStyle.Bold);
-        autoCoordinateButton.Click += (_, _) => StartAutoCoordinateCapture();
 
         captureClick1Button.Text = "İşlem 1 Görselini Kaydet";
         captureClick1Button.AutoSize = true;
@@ -325,10 +290,9 @@ public class MainForm : Form
         foreach (Control c in new Control[] {
             startButton, stopButton, useVisualActionsCheckBox,
             scanButton, detectButton, errorRefreshButton,
-            refreshAllButton, captureRefreshVisualButton, testRefreshVisualButton,
-            autoCoordinateButton, captureCoordButton, captureClickButton,
+            refreshAllButton, captureClickButton,
             captureClick1Button, captureClick2Button, captureClick3Button,
-            testActionVisualsButton, saveCoordButton, saveSessionButton,
+            testActionVisualsButton, saveSessionButton,
             restoreSelectedButton, restoreAllButton
         })
         {
@@ -411,16 +375,14 @@ public class MainForm : Form
             SaveTimingSettings();
         };
 
-        settingsPanel.Controls.Add(new Label { Text = "Yenileme görseli eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        settingsPanel.Controls.Add(refreshTemplateThresholdBox, 1, 1);
-        settingsPanel.Controls.Add(new Label { Text = "İşlem görselleri eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-        settingsPanel.Controls.Add(actionTemplateThresholdBox, 1, 2);
-        settingsPanel.Controls.Add(new Label { Text = "Sayfa yenileme sonrası bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
-        settingsPanel.Controls.Add(reloadWaitBox, 1, 3);
-        settingsPanel.Controls.Add(new Label { Text = "Tarama döngüleri arasındaki bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 4);
-        settingsPanel.Controls.Add(scanIntervalBox, 1, 4);
-        settingsPanel.Controls.Add(new Label { Text = "Görsel tıklamaları arasındaki bekleme (ms):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 5);
-        settingsPanel.Controls.Add(actionClickDelayBox, 1, 5);
+        settingsPanel.Controls.Add(new Label { Text = "İşlem görselleri eşik değeri:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        settingsPanel.Controls.Add(actionTemplateThresholdBox, 1, 1);
+        settingsPanel.Controls.Add(new Label { Text = "Sayfa yenileme sonrası bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+        settingsPanel.Controls.Add(reloadWaitBox, 1, 2);
+        settingsPanel.Controls.Add(new Label { Text = "Tarama döngüleri arasındaki bekleme (sn):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
+        settingsPanel.Controls.Add(scanIntervalBox, 1, 3);
+        settingsPanel.Controls.Add(new Label { Text = "Görsel tıklamaları arasındaki bekleme (ms):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 4);
+        settingsPanel.Controls.Add(actionClickDelayBox, 1, 4);
 
         var urlGroup = new GroupBox { Text = "Toplu URL / Domain Değiştirme", Dock = DockStyle.Top, Padding = new Padding(12), Height = 145 };
         var urlPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3 };
@@ -446,67 +408,6 @@ public class MainForm : Form
         };
         settingsPanel.Controls.Add(settingsNote, 0, 7);
         settingsPanel.SetColumnSpan(settingsNote, 2);
-
-        var telegramGroup = new GroupBox
-        {
-            Text = "Telegram Rapor Ayarları",
-            Dock = DockStyle.Top,
-            Padding = new Padding(12),
-            Height = 310
-        };
-        var telegramPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 8 };
-        telegramPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-        telegramPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        telegramTokenBox.Dock = DockStyle.Fill;
-        telegramTokenBox.UseSystemPasswordChar = true;
-        telegramTokenBox.PlaceholderText = "BotFather'ın oluşturduğu yeni token";
-        telegramChatIdBox.Dock = DockStyle.Fill;
-        telegramChatIdBox.ReadOnly = true;
-        telegramChatIdBox.PlaceholderText = "Sohbeti Bul düğmesiyle otomatik belirlenir";
-        telegramPanel.Controls.Add(new Label { Text = "Bot tokeni:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        telegramPanel.Controls.Add(telegramTokenBox, 1, 0);
-        telegramPanel.Controls.Add(new Label { Text = "Sohbet kimliği:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        telegramPanel.Controls.Add(telegramChatIdBox, 1, 1);
-
-        findTelegramChatButton.Text = "SOHBETİ BUL VE KAYDET";
-        findTelegramChatButton.AutoSize = true;
-        findTelegramChatButton.Click += async (_, _) => await FindAndSaveTelegramChatAsync();
-        telegramPanel.Controls.Add(findTelegramChatButton, 1, 2);
-
-        testTelegramButton.Text = "TEST MESAJI GÖNDER";
-        testTelegramButton.AutoSize = true;
-        testTelegramButton.Click += async (_, _) => await SendTelegramTestMessageAsync();
-        telegramPanel.Controls.Add(testTelegramButton, 1, 3);
-
-        telegramReportWindowLabel.Text = "Rapor penceresi: 3 (normal otomasyondan muaf)";
-        telegramReportWindowLabel.AutoSize = true;
-        telegramReportWindowLabel.Anchor = AnchorStyles.Left;
-        telegramPanel.Controls.Add(telegramReportWindowLabel, 0, 4);
-        selectTelegramReportWindowButton.Text = "TABLODA SEÇİLİ PENCEREYİ KULLAN";
-        selectTelegramReportWindowButton.AutoSize = true;
-        selectTelegramReportWindowButton.Click += (_, _) => SelectTelegramReportWindow();
-        telegramPanel.Controls.Add(selectTelegramReportWindowButton, 1, 4);
-
-        telegramReportIntervalBox.Minimum = 1;
-        telegramReportIntervalBox.Maximum = 1440;
-        telegramReportIntervalBox.Value = 60;
-        telegramReportIntervalBox.Width = 90;
-        telegramReportIntervalBox.ValueChanged += (_, _) => SaveTelegramReportSettingsAndRestart();
-        telegramPanel.Controls.Add(new Label { Text = "Rapor aralığı (dk):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 5);
-        telegramPanel.Controls.Add(telegramReportIntervalBox, 1, 5);
-
-        enableTelegramReportsCheckBox.Text = "OTOMATİK TELEGRAM RAPORUNU AÇ";
-        enableTelegramReportsCheckBox.AutoSize = true;
-        enableTelegramReportsCheckBox.CheckedChanged += (_, _) => SaveTelegramReportSettingsAndRestart();
-        telegramPanel.Controls.Add(enableTelegramReportsCheckBox, 1, 6);
-
-        sendTelegramReportNowButton.Text = "RAPORU ŞİMDİ GÖNDER";
-        sendTelegramReportNowButton.AutoSize = true;
-        sendTelegramReportNowButton.Click += async (_, _) => await SendTelegramReportNowAsync();
-        telegramPanel.Controls.Add(sendTelegramReportNowButton, 1, 7);
-        telegramGroup.Controls.Add(telegramPanel);
-        settingsPanel.Controls.Add(telegramGroup, 0, 8);
-        settingsPanel.SetColumnSpan(telegramGroup, 2);
 
         var gmailGroup = new GroupBox
         {
@@ -544,7 +445,7 @@ public class MainForm : Form
         fillGmailCodeButton.Click += async (_, _) => await FillGmailCodeIntoOpenScreenAsync();
         gmailPanel.Controls.Add(fillGmailCodeButton, 1, 5);
         gmailGroup.Controls.Add(gmailPanel);
-        settingsPanel.Controls.Add(gmailGroup, 0, 9);
+        settingsPanel.Controls.Add(gmailGroup, 0, 10);
         settingsPanel.SetColumnSpan(gmailGroup, 2);
 
         settingsPanel.Controls.Add(new Label
@@ -552,7 +453,7 @@ public class MainForm : Form
             Text = $"Kurulu sürüm: {Application.ProductVersion}",
             AutoSize = true,
             Anchor = AnchorStyles.Left
-        }, 0, 10);
+        }, 0, 11);
         checkUpdateButton.Text = "GÜNCELLEME DENETLE";
         checkUpdateButton.AutoSize = true;
         checkUpdateButton.Click += async (_, _) =>
@@ -571,7 +472,7 @@ public class MainForm : Form
                 checkUpdateButton.Enabled = true;
             }
         };
-        settingsPanel.Controls.Add(checkUpdateButton, 1, 10);
+        settingsPanel.Controls.Add(checkUpdateButton, 1, 11);
         settingsPage.Controls.Add(settingsPanel);
 
         var urlListPage = new TabPage("🔗 URL Listesi") { Padding = new Padding(16) };
@@ -673,14 +574,11 @@ public class MainForm : Form
         Shown += async (_, _) =>
         {
             LoadTimingSettings();
-            LoadTelegramSettings();
             LoadGmailSettings();
             LoadUrlList();
             LoadTemplate();
-            LoadRefreshTemplate();
             LoadActionTemplates();
             ScanWindows();
-            RestartTelegramReportLoop();
             await UpdateService.CheckForUpdatesAsync(
                 this,
                 false,
@@ -690,10 +588,8 @@ public class MainForm : Form
         FormClosed += (_, _) =>
         {
             closeButtonTemplate?.Dispose();
-            refreshButtonTemplate?.Dispose();
+            fullscreenButtonTemplate?.Dispose();
             DisposeActionTemplates();
-            telegramReportCts?.Cancel();
-            telegramReportCts?.Dispose();
         };
     }
 
@@ -723,20 +619,6 @@ public class MainForm : Form
         notificationLabel.Text = "Uyarı yok.";
         notificationLabel.ForeColor = Color.DimGray;
         notificationPanel.BackColor = Color.WhiteSmoke;
-    }
-
-    void LoadTelegramSettings()
-    {
-        TelegramSettings settings = telegramService.LoadSettings();
-        telegramTokenBox.Text = settings.Token;
-        telegramChatIdBox.Text = settings.ChatId;
-        telegramSettingsLoading = true;
-        telegramReportWindowNumber = Math.Max(1, settings.ReportWindowNumber);
-        telegramReportIntervalMinutes = Math.Clamp(settings.ReportIntervalMinutes, 1, 1440);
-        telegramReportIntervalBox.Value = telegramReportIntervalMinutes;
-        enableTelegramReportsCheckBox.Checked = settings.ReportsEnabled;
-        telegramReportWindowLabel.Text = $"Rapor penceresi: {telegramReportWindowNumber} (normal otomasyondan muaf)";
-        telegramSettingsLoading = false;
     }
 
     void LoadGmailSettings()
@@ -874,16 +756,14 @@ public class MainForm : Form
         try
         {
             ScanWindows();
-            // Birden fazla Chrome açıkken giriş yalnızca Telegram raporu için
-            // seçilmiş pencereye uygulanır. Diğer pencerelere kesinlikle kod yazma.
-            ChromeWindow? target = telegramReportWindowNumber >= 1 &&
-                telegramReportWindowNumber <= windows.Count
-                ? windows[telegramReportWindowNumber - 1]
+            // Kod yalnızca tabloda seçili pencereye uygulanır. Tek pencere
+            // varsa doğrudan o pencere kullanılır.
+            ChromeWindow? target = TryGetSelectedWindow(out var selected, out _)
+                ? selected
                 : windows.Count == 1 ? windows[0] : null;
             if (target == null)
                 throw new InvalidOperationException(
-                    $"Seçili rapor penceresi ({telegramReportWindowNumber}) bulunamadı. " +
-                    "Tablodan giriş yapılacak Chrome penceresini rapor penceresi olarak seçin.");
+                    "Birden fazla Chrome penceresi açık. Kodun yazılacağı pencereyi tablodan seçin.");
             if (!await ActivateChromeWindowAsync(target.Handle))
                 throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
 
@@ -920,21 +800,7 @@ public class MainForm : Form
             }
 
             if (!loggedIn)
-            {
-                const string message = "Otobot uyarısı: 4 denemeden sonra giriş yapılamadı. Chrome penceresini ve doğrulama e-postasını kontrol edin.";
-                try
-                {
-                    await telegramService.SendMessageAsync(
-                        telegramTokenBox.Text,
-                        telegramChatIdBox.Text,
-                        message);
-                    ShowWarning(message + " Telegram'a bildirildi.");
-                }
-                catch (Exception telegramError)
-                {
-                    ShowWarning(message + " Telegram bildirimi gönderilemedi: " + telegramError.Message);
-                }
-            }
+                ShowWarning("4 denemeden sonra giriş yapılamadı. Chrome penceresini ve doğrulama e-postasını kontrol edin.");
         }
         catch (Exception ex)
         {
@@ -1072,130 +938,9 @@ public class MainForm : Form
         }
     }
 
-    async Task FindAndSaveTelegramChatAsync()
-    {
-        findTelegramChatButton.Enabled = false;
-        try
-        {
-            TelegramChat chat = await telegramService.FindLatestChatAsync(telegramTokenBox.Text);
-            telegramChatIdBox.Text = chat.Id;
-            telegramService.SaveSettings(telegramTokenBox.Text, chat.Id);
-            ShowInfo($"Telegram sohbeti bulundu ve güvenli biçimde kaydedildi: {chat.DisplayName}");
-        }
-        catch (Exception ex)
-        {
-            ShowWarning("Telegram sohbeti bulunamadı: " + ex.Message);
-        }
-        finally
-        {
-            findTelegramChatButton.Enabled = true;
-        }
-    }
-
-    async Task SendTelegramTestMessageAsync()
-    {
-        testTelegramButton.Enabled = false;
-        try
-        {
-            await telegramService.SendMessageAsync(
-                telegramTokenBox.Text,
-                telegramChatIdBox.Text,
-                $"Otobot bağlantısı çalışıyor. Test zamanı: {DateTime.Now:dd.MM.yyyy HH:mm:ss}");
-            telegramService.SaveSettings(telegramTokenBox.Text, telegramChatIdBox.Text);
-            ShowInfo("Telegram test mesajı başarıyla gönderildi.");
-        }
-        catch (Exception ex)
-        {
-            ShowWarning("Telegram test mesajı gönderilemedi: " + ex.Message);
-        }
-        finally
-        {
-            testTelegramButton.Enabled = true;
-        }
-    }
-
-    void SelectTelegramReportWindow()
-    {
-        if (!TryGetSelectedWindow(out _, out int index)) return;
-        telegramReportWindowNumber = index + 1;
-        telegramReportWindowLabel.Text = $"Rapor penceresi: {telegramReportWindowNumber} (normal otomasyondan muaf)";
-        SaveTelegramReportSettingsAndRestart();
-        ShowInfo($"{telegramReportWindowNumber} numaralı Chrome penceresi Telegram raporu için seçildi.");
-    }
-
-    void SaveTelegramReportSettingsAndRestart()
-    {
-        if (telegramSettingsLoading) return;
-
-        telegramReportIntervalMinutes = (int)telegramReportIntervalBox.Value;
-        try
-        {
-            telegramService.SaveSettings(new TelegramSettings
-            {
-                Token = telegramTokenBox.Text,
-                ChatId = telegramChatIdBox.Text,
-                ReportWindowNumber = telegramReportWindowNumber,
-                ReportIntervalMinutes = telegramReportIntervalMinutes,
-                ReportsEnabled = enableTelegramReportsCheckBox.Checked
-            });
-            RestartTelegramReportLoop();
-        }
-        catch (Exception ex)
-        {
-            if (enableTelegramReportsCheckBox.Checked)
-                ShowWarning("Telegram raporu başlatılamadı: " + ex.Message);
-        }
-    }
-
-    void RestartTelegramReportLoop()
-    {
-        telegramReportCts?.Cancel();
-        telegramReportCts?.Dispose();
-        telegramReportCts = null;
-
-        if (!enableTelegramReportsCheckBox.Checked || IsDisposed) return;
-        telegramReportCts = new CancellationTokenSource();
-        _ = RunTelegramReportLoopAsync(telegramReportCts.Token);
-    }
-
-    async Task RunTelegramReportLoopAsync(CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(TimeSpan.FromMinutes(telegramReportIntervalMinutes), token);
-                await CreateAndSendTelegramReportAsync(token);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                ShowWarning("Otomatik Telegram raporu gönderilemedi; sonraki döngü devam edecek: " + ex.Message);
-            }
-        }
-    }
-
-    async Task SendTelegramReportNowAsync()
-    {
-        sendTelegramReportNowButton.Enabled = false;
-        try
-        {
-            await CreateAndSendTelegramReportAsync(CancellationToken.None);
-            ShowInfo("Bakiye ve puan sıralaması Telegram'a gönderildi.");
-        }
-        catch (Exception ex)
-        {
-            ShowWarning("Telegram raporu gönderilemedi: " + ex.Message);
-        }
-        finally
-        {
-            sendTelegramReportNowButton.Enabled = true;
-        }
-    }
-
+    // Eski Telegram raporlama akışı kaldırıldı. Yeni tasarım için temiz bir
+    // başlangıç yapılana kadar bu kod derlemeye dahil edilmez.
+#if false
     async Task CreateAndSendTelegramReportAsync(CancellationToken token)
     {
         if (telegramReportInProgress)
@@ -1204,7 +949,18 @@ public class MainForm : Form
         ScanWindows();
         int effectiveWindowNumber = telegramReportWindowNumber;
         if (effectiveWindowNumber < 1 || effectiveWindowNumber > windows.Count)
-            throw new InvalidOperationException($"{telegramReportWindowNumber} numaralı Chrome penceresi bulunamadı.");
+        {
+            if (windows.Count == 1)
+            {
+                effectiveWindowNumber = 1;
+                telegramReportWindowNumber = 1;
+                telegramReportWindowLabel.Text = "Rapor penceresi: 1 (normal otomasyondan muaf)";
+            }
+            else
+            {
+                throw new InvalidOperationException($"{telegramReportWindowNumber} numaralı Chrome penceresi bulunamadı.");
+            }
+        }
 
         ChromeWindow reportWindow = windows[effectiveWindowNumber - 1];
         if (!GetWindowRect(reportWindow.Handle, out RECT rect))
@@ -1216,6 +972,25 @@ public class MainForm : Form
         reportWindow.Height = rect.Bottom - rect.Top;
         if (reportWindow.Width < 400 || reportWindow.Height < 300)
             throw new InvalidOperationException("Rapor penceresi çok küçük veya simge durumunda.");
+
+        // Yeni site tasarımında oyun kendi tam ekran düğmesini kullanmıyor.
+        // Chrome büyütülür, %75'e getirilir ve Turnuvalar içindeki Sıralamalar
+        // sekmesinden ilk görünür beş sıra okunur.
+        bool useNewSiteLayout = true;
+        if (useNewSiteLayout)
+        {
+            telegramReportInProgress = true;
+            try
+            {
+                await CreateAndSendNewSiteRankingReportAsync(
+                    reportWindow, effectiveWindowNumber, token);
+            }
+            finally
+            {
+                telegramReportInProgress = false;
+            }
+            return;
+        }
 
         IntPtr previousWindow = GetForegroundWindow();
         RECT fullscreenRect = default;
@@ -1230,17 +1005,26 @@ public class MainForm : Form
                 throw new InvalidOperationException("Rapor penceresi öne getirilemedi.");
             await Task.Delay(500, token);
 
-            status.Text = $"Rapor penceresi {effectiveWindowNumber}: Chrome sayfası yenileniyor...";
-            SendKeys.SendWait("^r");
-            await Task.Delay(TimeSpan.FromSeconds(pageReloadWaitSeconds), token);
+            if (closeButtonTemplate == null || closeButtonTemplate.Empty())
+                LoadTemplate();
+            var errorScreen = FindCloseButton(reportWindow, (double)thresholdBox.Value);
+            if (errorScreen.Found)
+            {
+                status.Text = $"Rapor penceresi {effectiveWindowNumber}: KAPAT hata ekranı bulundu ({errorScreen.Score:P1}); Chrome yenileniyor...";
+                await ReloadChromeCurrentAddressAsync(reportWindow, token);
+                await Task.Delay(TimeSpan.FromSeconds(pageReloadWaitSeconds), token);
+            }
+            else
+            {
+                status.Text = $"Rapor penceresi {effectiveWindowNumber}: hata ekranı yok; kupa adımına geçiliyor...";
+            }
 
             // Sayfa yenilemesi giriş ekranına götürdüyse oturuma müdahale etme;
             // kullanıcı girişini bekle ve bu saatlik turu güvenle atla.
             await WaitForGameToolbarAsync(reportWindow, token);
             GameToolbar toolbar = await PrepareReportGameAsync(reportWindow, token);
-            await ClickScreenPointAsync(toolbar.Right - 36, toolbar.CenterY, token);
+            fullscreenRect = await EnterGameFullscreenAsync(reportWindow, toolbar, token);
             gameFullscreenOpened = true;
-            fullscreenRect = await WaitForGameFullscreenAsync(reportWindow, token);
 
             ChangeChromeZoom(zoomIn: true);
             zoomRaised = true;
@@ -1254,24 +1038,21 @@ public class MainForm : Form
             if (!IsGameScreenReady(fullscreenGame))
                 throw new InvalidOperationException("Tam ekran oyun görüntüsü hazır değil.");
 
+            // Okuma alanlarını gerçek ekran düzeniyle doğrulamak için son rapor
+            // görüntüsünü yalnızca yerel uygulama verisinde tutar.
+            fullscreenGame.Save(
+                AppDataPaths.GetDataFilePath("last_report_fullscreen.png"),
+                System.Drawing.Imaging.ImageFormat.Png);
             decimal balance = gameReportOcrService.ReadBalance(fullscreenGame);
 
             int fullscreenWidth = fullscreenRect.Right - fullscreenRect.Left;
             int fullscreenHeight = fullscreenRect.Bottom - fullscreenRect.Top;
+            await WaitForTournamentButtonAsync(fullscreenRect, token);
             await ClickScreenPointAsync(
                 fullscreenRect.Left + (int)Math.Round(fullscreenWidth * .038),
                 fullscreenRect.Top + (int)Math.Round(fullscreenHeight * .687),
                 token);
-            await Task.Delay(900, token);
-            using (Bitmap dialogCheck = CaptureScreenArea(
-                fullscreenRect.Left,
-                fullscreenRect.Top,
-                fullscreenWidth,
-                fullscreenHeight))
-            {
-                if (!IsFullscreenTournamentDialogVisible(dialogCheck))
-                    throw new InvalidOperationException("Kupa tıklamasından sonra Turnuvalar penceresi açılamadı.");
-            }
+            await WaitForTournamentDialogAsync(fullscreenRect, token);
             tournamentDialogOpened = true;
 
             await ClickScreenPointAsync(
@@ -1286,6 +1067,9 @@ public class MainForm : Form
                 fullscreenRect.Top,
                 fullscreenWidth,
                 fullscreenHeight);
+            fullscreenRankings.Save(
+                AppDataPaths.GetDataFilePath("last_report_rankings.png"),
+                System.Drawing.Imaging.ImageFormat.Png);
             IReadOnlyList<long> scores = gameReportOcrService.ReadTopTen(fullscreenRankings);
             GameReportSnapshot? previous = gameReportHistoryService.Load();
             var current = new GameReportSnapshot
@@ -1320,6 +1104,127 @@ public class MainForm : Form
                 SetForegroundWindow(previousWindow);
             telegramReportInProgress = false;
         }
+    }
+
+    async Task CreateAndSendNewSiteRankingReportAsync(
+        ChromeWindow reportWindow,
+        int windowNumber,
+        CancellationToken token)
+    {
+        if (!await ActivateChromeWindowAsync(reportWindow.Handle))
+            throw new InvalidOperationException("Rapor penceresi öne getirilemedi.");
+
+        if (!GetWindowRect(reportWindow.Handle, out var rect))
+            throw new InvalidOperationException("Chrome penceresinin konumu okunamadı.");
+        reportWindow.X = rect.Left; reportWindow.Y = rect.Top;
+        reportWindow.Width = rect.Right - rect.Left; reportWindow.Height = rect.Bottom - rect.Top;
+
+        await ClickNewSiteFullscreenButtonAsync(reportWindow, token);
+        await Task.Delay(900, token);
+        if (!GetWindowRect(reportWindow.Handle, out rect))
+            throw new InvalidOperationException("Tam ekran sonrası pencere konumu okunamadı.");
+        reportWindow.X = rect.Left; reportWindow.Y = rect.Top;
+        reportWindow.Width = rect.Right - rect.Left; reportWindow.Height = rect.Bottom - rect.Top;
+
+        decimal balance;
+        using (var balanceImage = CaptureScreenArea(
+            reportWindow.X, reportWindow.Y, reportWindow.Width, reportWindow.Height))
+        {
+            // Tanılama için raporun kaynak görüntüsünü sakla; bu dosya yalnızca
+            // kullanıcının yerel uygulama verisindedir.
+            balanceImage.Save(AppDataPaths.GetDataFilePath("last_report_game.png"),
+                System.Drawing.Imaging.ImageFormat.Png);
+            balance = gameReportOcrService.ReadBalance(balanceImage);
+        }
+
+        status.Text = "Kupa simgesi bekleniyor...";
+        await WaitForNewSiteTournamentButtonAsync(reportWindow, token);
+        await ClickScreenPointAsync(
+            // Yeni tam ekran görünümünde kupa, ekranın sol kenarında yer alıyor.
+            reportWindow.X + (int)Math.Round(reportWindow.Width * .043),
+            reportWindow.Y + (int)Math.Round(reportWindow.Height * .690), token);
+        // Kupa artık küçük bir pencere açmıyor; ayrı Turnuvalar sayfasına
+        // geçiş yapıyor. Sayfanın yüklenmesine zaman tanı.
+        await Task.Delay(2500, token);
+
+        status.Text = "Sıralamalar sekmesi açılıyor...";
+        await ClickScreenPointAsync(
+            // Turnuvalar sayfasının üst menüsündeki Sıralamalar sekmesi.
+            // Sıralamalar sekmesi, Turnuvalar penceresinin orta-sağında.
+            // .564 değeri Kurallar sekmesine denk geliyordu.
+            reportWindow.X + (int)Math.Round(reportWindow.Width * .517),
+            reportWindow.Y + (int)Math.Round(reportWindow.Height * .213), token);
+        await Task.Delay(1500, token);
+
+        using var rankingsImage = CaptureScreenArea(
+            reportWindow.X, reportWindow.Y, reportWindow.Width, reportWindow.Height);
+        rankingsImage.Save(AppDataPaths.GetDataFilePath("last_report_rankings.png"),
+            System.Drawing.Imaging.ImageFormat.Png);
+        IReadOnlyList<long> scores = gameReportOcrService.ReadNewSiteTopTen(rankingsImage);
+
+        GameReportSnapshot? previous = gameReportHistoryService.Load();
+        if (previous?.Scores.Count != scores.Count)
+            previous = null;
+        var current = new GameReportSnapshot
+        {
+            CapturedAt = DateTime.Now,
+            Balance = balance,
+            Scores = scores.ToList()
+        };
+        await telegramService.SendMessageAsync(
+            telegramTokenBox.Text, telegramChatIdBox.Text,
+            BuildTelegramRankingMessage(windowNumber, current, previous), token);
+        gameReportHistoryService.Save(current);
+    }
+
+    async Task WaitForNewSiteTournamentButtonAsync(ChromeWindow window, CancellationToken token)
+    {
+        for (int attempt = 1; attempt <= 30; attempt++)
+        {
+            using var image = CaptureScreenArea(window.X, window.Y, window.Width, window.Height);
+            int goldPixels = 0;
+            // Kupa artık sol alt köşede. Eski konum (.10-.17) simgeyi
+            // tamamen dışarıda bırakıyordu ve rapor akışını durduruyordu.
+            int left = (int)(image.Width * .005), right = (int)(image.Width * .085);
+            int top = (int)(image.Height * .62), bottom = (int)(image.Height * .76);
+            for (int y = top; y < bottom; y += 3)
+            for (int x = left; x < right; x += 3)
+            {
+                Color pixel = image.GetPixel(x, y);
+                if (pixel.R > 150 && pixel.G > 90 && pixel.B < 100) goldPixels++;
+            }
+            if (goldPixels >= 25) return;
+            await Task.Delay(1000, token);
+        }
+        throw new InvalidOperationException("Kupa simgesi görünmedi; tıklama yapılmadı.");
+    }
+
+    static void SendChromeCtrlShortcut(byte key)
+    {
+        const byte VK_CONTROL = 0x11;
+        const uint KEYEVENTF_KEYUP = 0x0002;
+        keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
+        keybd_event(key, 0, 0, UIntPtr.Zero);
+        keybd_event(key, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
+
+    static string BuildNewSiteRankingMessage(
+        int windowNumber, GameReportSnapshot current, GameReportSnapshot? previous)
+    {
+        var message = new StringBuilder();
+        message.AppendLine("Otobot Sıralama Raporu");
+        message.AppendLine($"Pencere: {windowNumber} | {current.CapturedAt:dd.MM.yyyy HH:mm}");
+        message.AppendLine();
+        message.AppendLine(previous == null ? "Sıra | Puan" : "Sıra | Puan | Önceki rapora fark");
+        for (int i = 0; i < current.Scores.Count; i++)
+        {
+            if (previous == null)
+                message.AppendLine($"{i + 1} | {current.Scores[i]:N0}");
+            else
+                message.AppendLine($"{i + 1} | {current.Scores[i]:N0} | {FormatDifference(current.Scores[i] - previous.Scores[i])}");
+        }
+        return message.ToString().TrimEnd();
     }
 
     static string BuildTelegramRankingMessage(
@@ -1368,9 +1273,8 @@ public class MainForm : Form
             $"Rapor öncesi KAPAT uyarısı bulundu ({match.Score:P1}); " +
             "oyun yenileniyor ve 30 saniye beklenecek...";
 
-        // KAPAT düğmesine dokunma. Oyun panelinin üst kırmızı şeridindeki
-        // dairesel yenileme simgesine tıkla.
-        await ClickScreenPointAsync(toolbar.Right - 23, toolbar.CenterY, token);
+        // KAPAT düğmesine dokunma; Chrome sayfasını doğrudan yenile.
+        await ClickRefreshAsync(reportWindow, token);
         await Task.Delay(TimeSpan.FromSeconds(30), token);
 
         var remaining = FindCloseButton(reportWindow, threshold);
@@ -1472,6 +1376,55 @@ public class MainForm : Form
         throw new InvalidOperationException("Oyun tam ekran moduna geçemedi.");
     }
 
+    async Task<RECT> EnterGameFullscreenAsync(
+        ChromeWindow window,
+        GameToolbar initialToolbar,
+        CancellationToken token)
+    {
+        GameToolbar toolbar = initialToolbar;
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            if (!await ActivateChromeWindowAsync(window.Handle))
+                throw new InvalidOperationException("Rapor penceresi tam ekran için öne getirilemedi.");
+            await Task.Delay(500, token);
+
+            if (attempt > 1)
+                toolbar = FindGameToolbar(window);
+            status.Text = $"Rapor için tam ekran açılıyor... Deneme {attempt}/3";
+            if (useVisualActions && fullscreenButtonTemplate != null)
+            {
+                var match = FindVisualTemplate(
+                    window,
+                    fullscreenButtonTemplate,
+                    fullscreenTemplateDefinition,
+                    .72,
+                    Math.Min(RefreshSearchHeight + 80, window.Height));
+                if (!match.Found)
+                    throw new InvalidOperationException(
+                        $"Tam ekran görseli bulunamadı. En iyi eşleşme: {match.Score:P1}. " +
+                        "Ayarlar sekmesinden görseli yeniden kaydedin veya eşik değerini azaltın.");
+
+                status.Text = $"Tam ekran görseli bulundu ({match.Score:P1}); tıklanıyor... Deneme {attempt}/3";
+                await ClickScreenPointAsync(match.ScreenX, match.ScreenY, token);
+            }
+            else
+            {
+                await ClickScreenPointAsync(toolbar.Right - 36, toolbar.CenterY, token);
+            }
+
+            try
+            {
+                return await WaitForGameFullscreenAsync(window, token);
+            }
+            catch (InvalidOperationException) when (attempt < 3)
+            {
+                await Task.Delay(350, token);
+            }
+        }
+
+        throw new InvalidOperationException("Oyun tam ekran moduna üç denemede geçemedi.");
+    }
+
     static void ChangeChromeZoom(bool zoomIn)
     {
         string keys = zoomIn ? "^{+}" : "^-";
@@ -1500,6 +1453,59 @@ public class MainForm : Form
             }
         }
         return sampledPixels > 0 && darkPixels / (double)sampledPixels >= .55;
+    }
+
+    static bool IsTournamentButtonVisible(Bitmap image)
+    {
+        // Kupa sol taraftaki oyun panelinde bulunur. Altın sarısı piksel
+        // yoğunluğu, oyun henüz yüklenmemişken oluşan yanlış tıklamaları önler.
+        int left = 0;
+        int right = Math.Min(image.Width, (int)(image.Width * .11));
+        int top = Math.Max(0, (int)(image.Height * .55));
+        int bottom = Math.Min(image.Height, (int)(image.Height * .80));
+        int goldPixels = 0;
+        for (int y = top; y < bottom; y += 3)
+        {
+            for (int x = left; x < right; x += 3)
+            {
+                Color pixel = image.GetPixel(x, y);
+                if (pixel.R > 150 && pixel.G > 90 && pixel.G < 210 && pixel.B < 90)
+                    goldPixels++;
+            }
+        }
+        return goldPixels >= 45;
+    }
+
+    async Task WaitForTournamentButtonAsync(RECT fullscreenRect, CancellationToken token)
+    {
+        int width = fullscreenRect.Right - fullscreenRect.Left;
+        int height = fullscreenRect.Bottom - fullscreenRect.Top;
+        for (int attempt = 1; attempt <= 30; attempt++)
+        {
+            using var image = CaptureScreenArea(fullscreenRect.Left, fullscreenRect.Top, width, height);
+            if (IsTournamentButtonVisible(image))
+            {
+                status.Text = "Kupa simgesi görüldü; turnuva listesi açılıyor...";
+                return;
+            }
+            status.Text = $"Kupa simgesi bekleniyor... {attempt}/30";
+            await Task.Delay(1000, token);
+        }
+        throw new InvalidOperationException("Kupa simgesi 30 saniye içinde görünmedi; tıklama yapılmadı.");
+    }
+
+    async Task WaitForTournamentDialogAsync(RECT fullscreenRect, CancellationToken token)
+    {
+        int width = fullscreenRect.Right - fullscreenRect.Left;
+        int height = fullscreenRect.Bottom - fullscreenRect.Top;
+        for (int attempt = 1; attempt <= 15; attempt++)
+        {
+            using var image = CaptureScreenArea(fullscreenRect.Left, fullscreenRect.Top, width, height);
+            if (IsFullscreenTournamentDialogVisible(image))
+                return;
+            await Task.Delay(1000, token);
+        }
+        throw new InvalidOperationException("Kupa tıklamasından sonra Turnuvalar penceresi açılamadı.");
     }
 
     static bool IsGameScreenReady(Bitmap image)
@@ -1579,6 +1585,15 @@ public class MainForm : Form
     readonly record struct GameToolbar(int Left, int Right, int Top, int Bottom)
     {
         public int CenterY => Top + Math.Max(1, Bottom - Top) / 2;
+    }
+#endif
+
+    static async Task ClickScreenPointAsync(int x, int y, CancellationToken token)
+    {
+        SetCursorPos(x, y);
+        await Task.Delay(100, token);
+        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -1668,23 +1683,27 @@ public class MainForm : Form
 
         // Seçili moda göre ilk sol tıklamadan görsel ya da koordinat kaydı al.
         if (nCode >= 0 &&
-            (pendingRefreshTemplateCapture || pendingActionCaptureNumber >= 1) &&
+            (pendingRefreshTemplateCapture || pendingFullscreenTemplateCapture || pendingActionCaptureNumber >= 1) &&
             wParam == (IntPtr)WM_LBUTTONDOWN)
         {
             var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             int actionNumber = pendingActionCaptureNumber;
             bool captureVisual = pendingActionCaptureUsesVisual;
             bool captureRefresh = pendingRefreshTemplateCapture;
+            bool captureFullscreen = pendingFullscreenTemplateCapture;
             int x = data.pt.X;
             int y = data.pt.Y;
             pendingActionCaptureNumber = 0;
             pendingRefreshTemplateCapture = false;
+            pendingFullscreenTemplateCapture = false;
             suppressActionCaptureMouseDown = true;
 
             BeginInvoke(new Action(async () =>
             {
                 if (captureRefresh)
                     await CapturePendingRefreshTemplateAsync(x, y);
+                else if (captureFullscreen)
+                    await CapturePendingFullscreenTemplateAsync(x, y);
                 else if (captureVisual)
                     await CapturePendingActionTemplateAsync(actionNumber, x, y);
                 else
@@ -1754,12 +1773,10 @@ public class MainForm : Form
             pageReloadWaitSeconds = Math.Clamp(cfg.ReloadWaitSeconds, 1, 600);
             scanIntervalSeconds = Math.Clamp(cfg.ScanIntervalSeconds, 1, 600);
             actionClickDelayMs = Math.Clamp(cfg.ActionClickDelayMs, 50, 10000);
-            decimal refreshVisualThreshold = Math.Clamp(cfg.RefreshTemplateThreshold, .50m, .99m);
             decimal actionVisualThreshold = Math.Clamp(cfg.ActionTemplateThreshold, .50m, .99m);
             reloadWaitBox.Value = pageReloadWaitSeconds;
             scanIntervalBox.Value = scanIntervalSeconds;
             actionClickDelayBox.Value = actionClickDelayMs;
-            refreshTemplateThresholdBox.Value = refreshVisualThreshold;
             actionTemplateThresholdBox.Value = actionVisualThreshold;
             useVisualActions = cfg.UseVisualActions;
             useVisualActionsCheckBox.Checked = useVisualActions;
@@ -1779,7 +1796,7 @@ public class MainForm : Form
                     ReloadWaitSeconds = pageReloadWaitSeconds,
                     ScanIntervalSeconds = scanIntervalSeconds,
                     ActionClickDelayMs = actionClickDelayMs,
-                    RefreshTemplateThreshold = refreshTemplateThresholdBox.Value,
+                    RefreshTemplateThreshold = .72m,
                     ActionTemplateThreshold = actionTemplateThresholdBox.Value,
                     UseVisualActions = useVisualActions
                 }));
@@ -1918,7 +1935,16 @@ public class MainForm : Form
     void LoadTemplate()
     {
         closeButtonTemplate?.Dispose();
-        closeButtonTemplate = LoadEmbeddedTemplate(EmbeddedTemplates.CloseButton);
+        string templatePath = Path.Combine(AppContext.BaseDirectory, "Assets", "close_button.png");
+        if (File.Exists(templatePath))
+        {
+            using var bitmap = new Bitmap(templatePath);
+            closeButtonTemplate = BitmapConverter.ToMat(bitmap);
+        }
+        else
+        {
+            closeButtonTemplate = LoadEmbeddedTemplate(EmbeddedTemplates.CloseButton);
+        }
         if (closeButtonTemplate == null)
             ShowWarning("Gömülü KAPAT butonu şablonu yüklenemedi.");
     }
@@ -1983,6 +2009,69 @@ public class MainForm : Form
                 refreshTemplateDefinition,
                 new JsonSerializerOptions { WriteIndented = true }));
     }
+
+    string FullscreenTemplateSettingsPath =>
+        AppDataPaths.GetDataFilePath("fullscreen_template_settings.json");
+
+    string FullscreenTemplateFilePath =>
+        AppDataPaths.GetDataFilePath("fullscreen_button.png");
+
+    void LoadFullscreenTemplate()
+    {
+        fullscreenButtonTemplate?.Dispose();
+        fullscreenButtonTemplate = null;
+        fullscreenTemplateDefinition = new VisualTemplateDefinition();
+        try
+        {
+            string bundled = Path.Combine(AppContext.BaseDirectory, "Assets", "fullscreen_button.png");
+            if (File.Exists(bundled))
+            {
+                using var bitmap = new Bitmap(bundled);
+                fullscreenButtonTemplate = BitmapConverter.ToMat(bitmap);
+                UpdateFullscreenTemplateButtonLabel();
+                return;
+            }
+            if (File.Exists(FullscreenTemplateSettingsPath))
+                fullscreenTemplateDefinition = JsonSerializer.Deserialize<VisualTemplateDefinition>(
+                    File.ReadAllText(FullscreenTemplateSettingsPath)) ?? new();
+            if (File.Exists(FullscreenTemplateFilePath))
+            {
+                using var bitmap = new Bitmap(FullscreenTemplateFilePath);
+                var template = BitmapConverter.ToMat(bitmap);
+                if (template.Width >= 10 && template.Height >= 10) fullscreenButtonTemplate = template;
+                else template.Dispose();
+            }
+        }
+        catch
+        {
+            fullscreenButtonTemplate?.Dispose();
+            fullscreenButtonTemplate = null;
+            fullscreenTemplateDefinition = new VisualTemplateDefinition();
+        }
+        UpdateFullscreenTemplateButtonLabel();
+    }
+
+    async Task ClickNewSiteFullscreenButtonAsync(ChromeWindow window, CancellationToken token)
+    {
+        if (fullscreenButtonTemplate == null) LoadFullscreenTemplate();
+        if (fullscreenButtonTemplate == null)
+            throw new InvalidOperationException("Tam ekran görseli yüklenemedi.");
+        var match = FindVisualTemplate(window, fullscreenButtonTemplate,
+            fullscreenTemplateDefinition, .70, window.Height);
+        if (!match.Found)
+            throw new InvalidOperationException($"Tam ekran düğmesi bulunamadı. En iyi eşleşme: {match.Score:P1}.");
+        status.Text = $"Tam ekran düğmesi bulundu ({match.Score:P1}); tıklanıyor...";
+        await ClickScreenPointAsync(match.ScreenX, match.ScreenY, token);
+    }
+
+    void SaveFullscreenTemplateSettings() => File.WriteAllText(
+        FullscreenTemplateSettingsPath,
+        JsonSerializer.Serialize(fullscreenTemplateDefinition, new JsonSerializerOptions { WriteIndented = true }));
+
+    void UpdateFullscreenTemplateButtonLabel() =>
+        captureFullscreenVisualButton.Text = fullscreenButtonTemplate == null
+            ? "TAM EKRAN GÖRSELİNİ KAYDET"
+            : "✓ TAM EKRAN GÖRSELİNİ DEĞİŞTİR";
 
     string ActionTemplateSettingsPath =>
         AppDataPaths.GetDataFilePath("action_template_settings.json");
@@ -2067,12 +2156,7 @@ public class MainForm : Form
         }
     }
 
-    void UpdateRefreshTemplateButtonLabel()
-    {
-        captureRefreshVisualButton.Text = refreshButtonTemplate == null
-            ? "Yenileme Görselini Kaydet (F8)"
-            : "✓ Yenileme Görselini Değiştir (F8)";
-    }
+    void UpdateRefreshTemplateButtonLabel() { }
 
     void ApplyActionModeUi()
     {
@@ -2080,12 +2164,8 @@ public class MainForm : Form
             ? "Sıradaki İşlem Görselini Kaydet (F9)"
             : "Sıradaki İşlem Koordinatını Kaydet (F9)";
         testActionVisualsButton.Visible = useVisualActions;
-        captureRefreshVisualButton.Visible = useVisualActions;
-        testRefreshVisualButton.Visible = useVisualActions;
-        autoCoordinateButton.Visible = !useVisualActions;
-        captureCoordButton.Visible = !useVisualActions;
-        saveCoordButton.Visible = !useVisualActions;
-        refreshTemplateThresholdBox.Enabled = useVisualActions;
+        captureFullscreenVisualButton.Enabled = useVisualActions;
+        testFullscreenVisualButton.Enabled = useVisualActions;
         actionTemplateThresholdBox.Enabled = useVisualActions;
         hotkeyStatus.Text = useVisualActions
             ? "F12: Başlat | F11: Durdur | F8: Yenileme | F9: İşlem görseli"
@@ -2108,7 +2188,7 @@ public class MainForm : Form
                 : "⚡ TÜM KOORDİNATLARI TOPLA";
         }
 
-        UpdateRefreshTemplateButtonLabel();
+        UpdateFullscreenTemplateButtonLabel();
         UpdateActionTemplateButtonLabels();
     }
 
@@ -2243,6 +2323,71 @@ public class MainForm : Form
         {
             ShowWarning("Yenileme görseli kaydedilemedi:\n" + ex.Message);
             status.Text = "Yenileme görseli kaydedilemedi.";
+        }
+    }
+
+    void BeginCaptureFullscreenTemplate()
+    {
+        if (!useVisualActions)
+        {
+            ShowWarning("Tam ekran görseli kaydetmek için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
+            return;
+        }
+        if (scanCts != null)
+        {
+            ShowWarning("Tam ekran görselini kaydetmeden önce çalışan taramayı F11 ile durdurun.");
+            return;
+        }
+        if (windows.Count == 0)
+        {
+            ScanWindows();
+            if (windows.Count == 0)
+            {
+                ShowWarning("Önce en az bir Chrome penceresi açın.");
+                return;
+            }
+        }
+
+        pendingActionCaptureNumber = 0;
+        pendingRefreshTemplateCapture = false;
+        pendingFullscreenTemplateCapture = true;
+        suppressActionCaptureMouseDown = false;
+        status.Text = "Tam ekran görseli bekleniyor — oyun çubuğundaki tam ekran simgesinin ORTASINA sol tıklayın. Bu kayıt tıklaması oyuna gönderilmeyecek.";
+    }
+
+    async Task CapturePendingFullscreenTemplateAsync(int screenX, int screenY)
+    {
+        if (!TryFindWindowAt(screenX, screenY, out var targetWindow) ||
+            screenY < targetWindow.Y + 75 ||
+            screenY >= targetWindow.Y + Math.Min(RefreshSearchHeight + 80, targetWindow.Height))
+        {
+            ShowWarning("Tam ekran simgesini oyun araç çubuğundan seçin.");
+            status.Text = "Tam ekran görseli kaydedilemedi.";
+            return;
+        }
+
+        try
+        {
+            await MoveCursorAwayAndWaitAsync(targetWindow, screenX, screenY);
+            int captureWidth = Math.Min(RefreshTemplateWidth, targetWindow.Width);
+            int captureHeight = Math.Min(RefreshTemplateHeight, targetWindow.Height);
+            int left = Math.Clamp(screenX - captureWidth / 2, targetWindow.X, targetWindow.X + targetWindow.Width - captureWidth);
+            int top = Math.Clamp(screenY - captureHeight / 2, targetWindow.Y, targetWindow.Y + targetWindow.Height - captureHeight);
+            using var bitmap = CaptureScreenArea(left, top, captureWidth, captureHeight);
+            bitmap.Save(FullscreenTemplateFilePath, System.Drawing.Imaging.ImageFormat.Png);
+            fullscreenTemplateDefinition = new VisualTemplateDefinition
+            {
+                ClickOffsetX = screenX - left,
+                ClickOffsetY = screenY - top
+            };
+            SaveFullscreenTemplateSettings();
+            LoadFullscreenTemplate();
+            status.Text = $"Tam ekran görseli kaydedildi ({captureWidth}×{captureHeight}). Rapor bu görseli bularak tıklayacak.";
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Tam ekran görseli kaydedilemedi:\n" + ex.Message);
+            status.Text = "Tam ekran görseli kaydedilemedi.";
         }
     }
 
@@ -2463,7 +2608,10 @@ public class MainForm : Form
     {
         if (hWnd == IntPtr.Zero || !IsWindow(hWnd)) return false;
 
-        ShowWindow(hWnd, SW_RESTORE);
+        // Büyütülmüş pencereyi normal boyuta geri döndürme. Yalnızca
+        // simge durumundaysa geri yükleyip odaklan.
+        if (IsIconic(hWnd))
+            ShowWindow(hWnd, SW_RESTORE);
 
         uint currentThread = GetCurrentThreadId();
         uint targetThread = GetWindowThreadProcessId(hWnd, out _);
@@ -2503,6 +2651,27 @@ public class MainForm : Form
 
     async Task<string> GetChromeUrlAsync(ChromeWindow w)
     {
+        // Chrome'un yeni arayüzünde Ctrl+L/C ile panoya URL alınamayabiliyor.
+        // Erişilebilirlik ağacındaki adres çubuğu bu durumda doğrudan değeri verir.
+        try
+        {
+            var root = AutomationElement.FromHandle(w.Handle);
+            var addressBar = root.FindFirst(
+                TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.AutomationIdProperty, "view_1012"));
+            if (addressBar != null &&
+                addressBar.TryGetCurrentPattern(ValuePattern.Pattern, out var addressPattern))
+            {
+                string address = ((ValuePattern)addressPattern).Current.Value.Trim();
+                if (!address.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                    !address.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    address = "https://" + address;
+                if (IsValidHttpUrl(address))
+                    return address;
+            }
+        }
+        catch { }
+
         IntPtr previous = GetForegroundWindow();
         try
         {
@@ -2858,9 +3027,35 @@ public class MainForm : Form
         }
 
         ScanWindows();
+        ArrangeRestoredWindowsInGrid(records.Count);
         status.Text = restored == 0
-            ? "Eksik kayıtlı pencere bulunmadı. Açık Chrome pencerelerine dokunulmadı."
-            : $"{restored} eksik kayıtlı pencere geri yüklendi.";
+            ? "Kayıtlı Chrome pencereleri ızgara düzenine yerleştirildi."
+            : $"{restored} eksik kayıtlı pencere geri yüklendi ve ızgara düzenine yerleştirildi.";
+    }
+
+    void ArrangeRestoredWindowsInGrid(int savedWindowCount)
+    {
+        int count = Math.Min(savedWindowCount, windows.Count);
+        if (count == 0) return;
+
+        const int columns = 4;
+        int rows = (int)Math.Ceiling(count / (double)columns);
+        var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+        const int gap = 4;
+        int cellWidth = Math.Max(260, (area.Width - gap * (columns - 1)) / columns);
+        int cellHeight = Math.Max(220, (area.Height - gap * (rows - 1)) / rows);
+
+        for (int i = 0; i < count; i++)
+        {
+            int column = i % columns;
+            int row = i / columns;
+            int x = area.Left + column * (cellWidth + gap);
+            int y = area.Top + row * (cellHeight + gap);
+            IntPtr handle = windows[i].Handle;
+            if (!IsWindow(handle)) continue;
+            ShowWindow(handle, SW_RESTORE);
+            MoveWindow(handle, x, y, cellWidth, cellHeight, true);
+        }
     }
 
     async Task RestoreSessionRecordAsync(SessionRecord record)
@@ -2996,20 +3191,12 @@ public class MainForm : Form
         double threshold = (double)thresholdBox.Value; int errors = 0;
         for (int i = 0; i < windows.Count; i++)
         {
-            if (IsTelegramReportWindow(i))
-            {
-                UpdateRow(i, "RAPOR PENCERESİ — MUAF", 0, Color.Lavender);
-                continue;
-            }
             var r = FindError(windows[i], threshold);
             if (r.Found) errors++;
             UpdateRow(i, r.Found ? "HATA BULUNDU" : "Normal", r.Score, r.Found ? Color.MistyRose : Color.Honeydew);
         }
-        status.Text = $"Tarama tamamlandı. {errors} pencerede hata bulundu; rapor penceresi muaf tutuldu.";
+        status.Text = $"Tarama tamamlandı. {errors} pencerede hata bulundu.";
     }
-
-    bool IsTelegramReportWindow(int index) =>
-        telegramReportWindowNumber > 0 && index == telegramReportWindowNumber - 1;
 
     (bool Found, double Score) FindError(ChromeWindow w, double threshold)
     {
@@ -3077,198 +3264,94 @@ public class MainForm : Form
 
     async Task ClickRefreshAsync(ChromeWindow w, CancellationToken token)
     {
-        if (useVisualActions)
-            await ClickRefreshByVisualAsync(w, token);
-        else
-            await ClickRefreshByCoordinateAsync(w, token);
+        await ReloadChromeCurrentAddressAsync(w, token);
+        status.Text = "Chrome'un Yeniden Yükle düğmesiyle sayfa yenileniyor...";
     }
 
-    async Task ClickRefreshByVisualAsync(ChromeWindow w, CancellationToken token)
+    async Task ReloadChromeCurrentAddressAsync(ChromeWindow w, CancellationToken token)
     {
-        if (refreshButtonTemplate == null)
-            throw new InvalidOperationException("Yenileme görseli eksik.");
-
         if (!IsWindow(w.Handle))
             throw new InvalidOperationException("Chrome penceresi artık açık değil.");
-
         ShowWindow(w.Handle, SW_RESTORE);
-        if (!GetWindowRect(w.Handle, out var rect))
-            throw new InvalidOperationException("Chrome penceresinin konumu/boyutu okunamadı.");
-
-        w.X = rect.Left;
-        w.Y = rect.Top;
-        w.Width = rect.Right - rect.Left;
-        w.Height = rect.Bottom - rect.Top;
-
         if (!await ActivateChromeWindowAsync(w.Handle))
             throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
-
-        await Task.Delay(150, token);
-        var match = FindVisualTemplate(
-            w,
-            refreshButtonTemplate,
-            refreshTemplateDefinition,
-            (double)refreshTemplateThresholdBox.Value,
-            RefreshSearchHeight);
-
-        if (!match.Found)
-        {
-            throw new InvalidOperationException(
-                $"Yenileme görseli bulunamadı. En iyi eşleşme: {match.Score:P1}. " +
-                "Görseli yeniden kaydedin veya görsel eşik değerini kontrollü biçimde azaltın.");
-        }
-
-        status.Text = $"Yenileme görseli bulundu ({match.Score:P1}); tıklanıyor...";
-        SetCursorPos(match.ScreenX, match.ScreenY);
-        await Task.Delay(100, token);
-        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
-        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
-    }
-
-    async Task ClickRefreshByCoordinateAsync(ChromeWindow w, CancellationToken token)
-    {
-        if (!w.RefreshRX.HasValue || !w.RefreshRY.HasValue)
-            throw new InvalidOperationException("Yenileme koordinatı eksik.");
-
-        if (!IsWindow(w.Handle))
-            throw new InvalidOperationException("Chrome penceresi artık açık değil.");
-
-        ShowWindow(w.Handle, SW_RESTORE);
-
-        // Pencere taşınmış veya boyutu değişmiş olabilir.
-        // Tıklamadan hemen önce gerçek güncel pencere geometrisini alıyoruz.
-        if (!GetWindowRect(w.Handle, out var rect))
-            throw new InvalidOperationException("Chrome penceresinin konumu/boyutu okunamadı.");
-
-        w.X = rect.Left;
-        w.Y = rect.Top;
-        w.Width = rect.Right - rect.Left;
-        w.Height = rect.Bottom - rect.Top;
-
-        if (!await ActivateChromeWindowAsync(w.Handle))
-            throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
-
         await Task.Delay(150, token);
 
-        int targetX;
-        int targetY;
-
-        if (w.RefreshOffsetX.HasValue && w.RefreshOffsetY.HasValue)
+        // Adres çubuğundaki mevcut adresi yeniden çalıştır. Bu, oyun alanının
+        // Ctrl+R/F5 kısayolunu veya normal yenileme düğmesini etkisiz kıldığı
+        // durumlarda da tam sayfa yüklemesi yapar.
+        try
         {
-            // Yenileme butonu Chrome'un tarayıcı arayüzünde olduğu için
-            // pencerenin sol-üstüne göre sabit piksel offset kullanıyoruz.
-            targetX = w.X + w.RefreshOffsetX.Value;
-            targetY = w.Y + w.RefreshOffsetY.Value;
+            var root = AutomationElement.FromHandle(w.Handle);
+            var addressBar = root.FindFirst(
+                TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.AutomationIdProperty, "view_1012"));
+            if (addressBar != null &&
+                addressBar.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern))
+            {
+                string currentAddress = ((ValuePattern)valuePattern).Current.Value;
+                addressBar.SetFocus();
+                ((ValuePattern)valuePattern).SetValue(currentAddress);
+                keybd_event(0x0D, 0, 0, UIntPtr.Zero);
+                keybd_event(0x0D, 0, 0x0002, UIntPtr.Zero);
+                return;
+            }
         }
-        else
-        {
-            // Eski refresh_coordinates.json dosyaları için geriye dönük uyumluluk.
-            targetX = w.X + (int)Math.Round(
-                Math.Clamp(w.RefreshRX.Value, 0, 1) * w.Width);
-            targetY = w.Y + (int)Math.Round(
-                Math.Clamp(w.RefreshRY.Value, 0, 1) * w.Height);
-        }
+        catch { }
 
-        // Güvenlik: pencerenin dışına çıkacak bir noktaya kesinlikle tıklama.
-        const int margin = 2;
-        if (targetX < w.X + margin || targetX > w.X + w.Width - margin ||
-            targetY < w.Y + margin || targetY > w.Y + w.Height - margin)
-        {
-            throw new InvalidOperationException(
-                $"Yenileme koordinatı pencere dışında hesaplandı: ({targetX},{targetY}).");
-        }
-
-        SetCursorPos(targetX, targetY);
+        // Chrome arayüzü erişilemezse son çare olarak adres çubuğunu yeniden aç.
+        SendKeys.SendWait("^l");
         await Task.Delay(100, token);
-
-        mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
-        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+        SendKeys.SendWait("{ENTER}");
     }
-
-
-    bool CoordinatesReady() => windows.Select((w, index) => new { w, index })
-        .Where(item => !IsTelegramReportWindow(item.index))
-        .All(item => item.w.RefreshRX.HasValue && item.w.RefreshRY.HasValue);
 
     bool EnsureRefreshMethodReady()
     {
-        if (useVisualActions)
-        {
-            if (refreshButtonTemplate != null) return true;
-            ShowWarning("Önce Yenileme Görselini Kaydet düğmesiyle yenileme simgesini kaydedin.");
-            return false;
-        }
-
-        if (CoordinatesReady()) return true;
-        var missing = windows.Select((w, index) => new { w, index })
-            .Where(item => !IsTelegramReportWindow(item.index) &&
-                (!item.w.RefreshRX.HasValue || !item.w.RefreshRY.HasValue))
-            .Select(item => item.index + 1);
-        ShowWarning(
-            "Yenileme koordinatı eksik olan pencereler: " + string.Join(", ", missing));
-        return false;
+        return true;
     }
 
     bool ActionTemplatesReady() => actionButtonTemplates.All(template => template != null);
 
     bool ActionCoordinatesReady() => windows.Select((w, index) => new { w, index })
-        .Where(item => !IsTelegramReportWindow(item.index))
         .All(item =>
             item.w.Click1RX.HasValue && item.w.Click1RY.HasValue &&
             item.w.Click2RX.HasValue && item.w.Click2RY.HasValue &&
             item.w.Click3RX.HasValue && item.w.Click3RY.HasValue);
 
-    async Task TestRefreshTemplateAsync()
+    async Task TestFullscreenTemplateAsync()
     {
         if (!useVisualActions)
         {
             ShowWarning("Görsel testi için önce GÖRSEL MODU seçim kutusunu işaretleyin.");
             return;
         }
-        if (refreshButtonTemplate == null)
+        if (fullscreenButtonTemplate == null)
         {
-            ShowWarning("Önce yenileme görselini kaydedin.");
+            ShowWarning("Önce tam ekran görselini kaydedin.");
             return;
         }
         if (!TryGetSelectedWindow(out var w, out _)) return;
 
-        testRefreshVisualButton.Enabled = false;
+        testFullscreenVisualButton.Enabled = false;
         try
         {
-            ShowWindow(w.Handle, SW_RESTORE);
             if (!GetWindowRect(w.Handle, out var rect))
                 throw new InvalidOperationException("Chrome penceresinin konumu okunamadı.");
-
-            w.X = rect.Left;
-            w.Y = rect.Top;
-            w.Width = rect.Right - rect.Left;
-            w.Height = rect.Bottom - rect.Top;
-
-            if (!await ActivateChromeWindowAsync(w.Handle))
-                throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
-
-            await Task.Delay(200);
-            var match = FindVisualTemplate(
-                w,
-                refreshButtonTemplate,
-                refreshTemplateDefinition,
-                (double)refreshTemplateThresholdBox.Value,
-                RefreshSearchHeight);
-
-            ShowInfo(
-                "Yenileme görseli testi — " +
-                $"Yenileme: {(match.Found ? "BULUNDU" : "bulunamadı")} — {match.Score:P1}" +
-                $" | Eşik: {refreshTemplateThresholdBox.Value:P0}" +
+            w.X = rect.Left; w.Y = rect.Top;
+            w.Width = rect.Right - rect.Left; w.Height = rect.Bottom - rect.Top;
+            var match = FindVisualTemplate(w, fullscreenButtonTemplate,
+                fullscreenTemplateDefinition, .72,
+                Math.Min(RefreshSearchHeight + 80, w.Height));
+            ShowInfo("Tam ekran görseli testi — " +
+                $"{(match.Found ? "BULUNDU" : "bulunamadı")} — {match.Score:P1}" +
+                " | Eşik: %72" +
                 " | Test sırasında tıklama yapılmadı.");
         }
         catch (Exception ex)
         {
-            ShowWarning("Yenileme görseli test edilemedi:\n" + ex.Message);
+            ShowWarning("Tam ekran görseli test edilemedi:\n" + ex.Message);
         }
-        finally
-        {
-            testRefreshVisualButton.Enabled = true;
-        }
+        finally { testFullscreenVisualButton.Enabled = true; }
     }
 
     async Task TestActionTemplatesAsync()
@@ -3347,10 +3430,9 @@ public class MainForm : Form
         if (!useVisualActions && !ActionCoordinatesReady())
         {
             var missing = windows.Select((w, index) => new { w, index })
-                .Where(item => !IsTelegramReportWindow(item.index) &&
-                    (!item.w.Click1RX.HasValue || !item.w.Click1RY.HasValue ||
+                .Where(item => !item.w.Click1RX.HasValue || !item.w.Click1RY.HasValue ||
                     !item.w.Click2RX.HasValue || !item.w.Click2RY.HasValue ||
-                    !item.w.Click3RX.HasValue || !item.w.Click3RY.HasValue))
+                    !item.w.Click3RX.HasValue || !item.w.Click3RY.HasValue)
                 .Select(item => item.index + 1);
             ShowWarning(
                 "Üç işlem koordinatı eksik olan pencereler: " + string.Join(", ", missing));
@@ -3581,8 +3663,7 @@ public class MainForm : Form
                 var errors = new List<int>();
                 for (int i = 0; i < windows.Count; i++)
                 {
-                    if (!IsTelegramReportWindow(i) &&
-                        grid.Rows[i].Cells["Hata Durumu"].Value?.ToString() == "HATA BULUNDU")
+                    if (grid.Rows[i].Cells["Hata Durumu"].Value?.ToString() == "HATA BULUNDU")
                         errors.Add(i);
                 }
 
@@ -3670,11 +3751,6 @@ public class MainForm : Form
             ScanWindows(); if (windows.Count == 0 || !EnsureRefreshMethodReady()) return;
             for (int i = 0; i < windows.Count; i++)
             {
-                if (IsTelegramReportWindow(i))
-                {
-                    UpdateRow(i, "RAPOR PENCERESİ — MUAF", 0, Color.Lavender);
-                    continue;
-                }
                 await ClickRefreshAsync(windows[i], CancellationToken.None);
                 UpdateRow(i, "YENİLENİYOR...", 0, Color.Khaki);
                 await Task.Delay(300);
@@ -3693,11 +3769,6 @@ public class MainForm : Form
             double threshold = (double)thresholdBox.Value; var errors = new List<int>();
             for (int i = 0; i < windows.Count; i++)
             {
-                if (IsTelegramReportWindow(i))
-                {
-                    UpdateRow(i, "RAPOR PENCERESİ — MUAF", 0, Color.Lavender);
-                    continue;
-                }
                 var r = FindError(windows[i], threshold);
                 UpdateRow(i, r.Found ? "HATA BULUNDU" : "Normal", r.Score, r.Found ? Color.MistyRose : Color.Honeydew);
                 if (r.Found) errors.Add(i);
