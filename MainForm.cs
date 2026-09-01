@@ -101,6 +101,13 @@ public class MainForm : Form
     readonly Button testGmailCodeButton = new();
     readonly Button fillGmailCodeButton = new();
     readonly GmailCodeService gmailCodeService = new();
+    readonly TextBox siteUserNameBox = new();
+    readonly TextBox sitePasswordBox = new();
+    readonly Button saveSiteLoginButton = new();
+    readonly Button captureHomeLoginButton = new();
+    readonly Button captureLoginFormButton = new();
+    readonly Button startAutomaticLoginButton = new();
+    readonly SiteLoginSettingsService siteLoginSettingsService = new();
     readonly TextBox urlListBaseAddressBox = new();
     readonly DataGridView urlListGrid = new();
     readonly Button saveUrlListButton = new();
@@ -115,6 +122,10 @@ public class MainForm : Form
     VisualTemplateDefinition refreshTemplateDefinition = new();
     Mat? fullscreenButtonTemplate;
     VisualTemplateDefinition fullscreenTemplateDefinition = new();
+    Mat? homeLoginButtonTemplate;
+    VisualTemplateDefinition homeLoginTemplateDefinition = new();
+    Mat? loginSubmitButtonTemplate;
+    LoginFormTemplateDefinition loginFormTemplateDefinition = new();
     readonly Mat?[] actionButtonTemplates = new Mat?[3];
     VisualTemplateDefinition[] actionTemplateDefinitions =
     [
@@ -133,8 +144,6 @@ public class MainForm : Form
     IntPtr mouseHook = IntPtr.Zero;
     LowLevelMouseProc? mouseProc;
     bool autoCoordinateCapture = false;
-    bool suppressFirstAutoClick = false;
-    bool suppressFirstAutoMouseUp = false;
 
     int autoCoordinateRow = 0;
     int autoCaptureStep = 0;
@@ -142,6 +151,10 @@ public class MainForm : Form
     bool pendingActionCaptureUsesVisual = true;
     bool pendingRefreshTemplateCapture = false;
     bool pendingFullscreenTemplateCapture = false;
+    bool pendingHomeLoginTemplateCapture = false;
+    int pendingLoginFormCaptureStep = 0;
+    System.Drawing.Point pendingLoginUserNamePoint;
+    System.Drawing.Point pendingLoginPasswordPoint;
     bool suppressActionCaptureMouseDown = false;
 
     const int RefreshTemplateWidth = 74;
@@ -188,6 +201,11 @@ public class MainForm : Form
         captureClickButton.Text = "Sıradaki İşlem Görselini Kaydet (F9)";
         captureClickButton.AutoSize = true;
         captureClickButton.Click += (_, _) => BeginCaptureAction(selectedClickNumber);
+
+        autoCoordinateButton.Text = "⚡ TÜM KOORDİNATLARI TOPLA";
+        autoCoordinateButton.AutoSize = true;
+        autoCoordinateButton.Font = new Font(Font.FontFamily, 9, FontStyle.Bold);
+        autoCoordinateButton.Click += (_, _) => StartAutoCoordinateCapture();
 
         saveSessionButton.Text = "PENCERELERİ KAYDET";
         saveSessionButton.AutoSize = true;
@@ -291,6 +309,7 @@ public class MainForm : Form
             startButton, stopButton, useVisualActionsCheckBox,
             scanButton, detectButton, errorRefreshButton,
             refreshAllButton, captureClickButton,
+            autoCoordinateButton,
             captureClick1Button, captureClick2Button, captureClick3Button,
             testActionVisualsButton, saveSessionButton,
             restoreSelectedButton, restoreAllButton
@@ -411,12 +430,12 @@ public class MainForm : Form
 
         var gmailGroup = new GroupBox
         {
-            Text = "Gmail Doğrulama Kodu Ayarları",
+            Text = "Otomatik Kullanıcı Girişi ve Gmail Doğrulama",
             Dock = DockStyle.Top,
             Padding = new Padding(12),
-            Height = 225
+            Height = 405
         };
-        var gmailPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 };
+        var gmailPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 12 };
         gmailPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         gmailPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         gmailAddressBox.Dock = DockStyle.Fill;
@@ -426,24 +445,50 @@ public class MainForm : Form
         gmailAppPasswordBox.PlaceholderText = "Google'ın oluşturduğu 16 haneli uygulama şifresi";
         gmailExpectedSenderBox.Dock = DockStyle.Fill;
         gmailExpectedSenderBox.PlaceholderText = "Örn. no-reply@siteadi.com (ilk koddan sonra doldurun)";
-        gmailPanel.Controls.Add(new Label { Text = "Gmail adresi:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        gmailPanel.Controls.Add(gmailAddressBox, 1, 0);
-        gmailPanel.Controls.Add(new Label { Text = "Uygulama şifresi:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        gmailPanel.Controls.Add(gmailAppPasswordBox, 1, 1);
-        gmailPanel.Controls.Add(new Label { Text = "Kod gönderen:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-        gmailPanel.Controls.Add(gmailExpectedSenderBox, 1, 2);
+        siteUserNameBox.Dock = DockStyle.Fill;
+        siteUserNameBox.PlaceholderText = "Site kullanıcı adı";
+        sitePasswordBox.Dock = DockStyle.Fill;
+        sitePasswordBox.UseSystemPasswordChar = true;
+        sitePasswordBox.PlaceholderText = "Site şifresi";
+        gmailPanel.Controls.Add(new Label { Text = "Site kullanıcı adı:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        gmailPanel.Controls.Add(siteUserNameBox, 1, 0);
+        gmailPanel.Controls.Add(new Label { Text = "Site şifresi:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        gmailPanel.Controls.Add(sitePasswordBox, 1, 1);
+        saveSiteLoginButton.Text = "SİTE GİRİŞ BİLGİLERİNİ GÜVENLE KAYDET";
+        saveSiteLoginButton.AutoSize = true;
+        saveSiteLoginButton.Click += (_, _) => SaveSiteLoginSettings();
+        gmailPanel.Controls.Add(saveSiteLoginButton, 1, 2);
+        captureHomeLoginButton.Text = "ANA SAYFA GİRİŞ YAP GÖRSELİNİ KAYDET";
+        captureHomeLoginButton.AutoSize = true;
+        captureHomeLoginButton.Click += (_, _) => BeginCaptureHomeLoginTemplate();
+        gmailPanel.Controls.Add(captureHomeLoginButton, 1, 3);
+        captureLoginFormButton.Text = "GİRİŞ FORMU ALANLARINI KAYDET";
+        captureLoginFormButton.AutoSize = true;
+        captureLoginFormButton.Click += (_, _) => BeginCaptureLoginFormTemplate();
+        gmailPanel.Controls.Add(captureLoginFormButton, 1, 4);
+        startAutomaticLoginButton.Text = "OTOMATİK GİRİŞİ BAŞLAT";
+        startAutomaticLoginButton.AutoSize = true;
+        startAutomaticLoginButton.Font = new Font(Font.FontFamily, 9, FontStyle.Bold);
+        startAutomaticLoginButton.Click += async (_, _) => await StartAutomaticLoginAsync();
+        gmailPanel.Controls.Add(startAutomaticLoginButton, 1, 5);
+        gmailPanel.Controls.Add(new Label { Text = "Gmail adresi:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 6);
+        gmailPanel.Controls.Add(gmailAddressBox, 1, 6);
+        gmailPanel.Controls.Add(new Label { Text = "Uygulama şifresi:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 7);
+        gmailPanel.Controls.Add(gmailAppPasswordBox, 1, 7);
+        gmailPanel.Controls.Add(new Label { Text = "Kod gönderen:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 8);
+        gmailPanel.Controls.Add(gmailExpectedSenderBox, 1, 8);
         saveGmailSettingsButton.Text = "GMAIL AYARLARINI GÜVENLE KAYDET";
         saveGmailSettingsButton.AutoSize = true;
         saveGmailSettingsButton.Click += (_, _) => SaveGmailSettings();
-        gmailPanel.Controls.Add(saveGmailSettingsButton, 1, 3);
+        gmailPanel.Controls.Add(saveGmailSettingsButton, 1, 9);
         testGmailCodeButton.Text = "SON DOĞRULAMA KODUNU TEST ET";
         testGmailCodeButton.AutoSize = true;
         testGmailCodeButton.Click += async (_, _) => await TestGmailCodeAsync();
-        gmailPanel.Controls.Add(testGmailCodeButton, 1, 4);
+        gmailPanel.Controls.Add(testGmailCodeButton, 1, 10);
         fillGmailCodeButton.Text = "AÇIK KOD EKRANINA KODU YAZ";
         fillGmailCodeButton.AutoSize = true;
         fillGmailCodeButton.Click += async (_, _) => await FillGmailCodeIntoOpenScreenAsync();
-        gmailPanel.Controls.Add(fillGmailCodeButton, 1, 5);
+        gmailPanel.Controls.Add(fillGmailCodeButton, 1, 11);
         gmailGroup.Controls.Add(gmailPanel);
         settingsPanel.Controls.Add(gmailGroup, 0, 10);
         settingsPanel.SetColumnSpan(gmailGroup, 2);
@@ -575,9 +620,11 @@ public class MainForm : Form
         {
             LoadTimingSettings();
             LoadGmailSettings();
+            LoadSiteLoginSettings();
             LoadUrlList();
             LoadTemplate();
             LoadActionTemplates();
+            LoadLoginTemplates();
             ScanWindows();
             await UpdateService.CheckForUpdatesAsync(
                 this,
@@ -589,6 +636,8 @@ public class MainForm : Form
         {
             closeButtonTemplate?.Dispose();
             fullscreenButtonTemplate?.Dispose();
+            homeLoginButtonTemplate?.Dispose();
+            loginSubmitButtonTemplate?.Dispose();
             DisposeActionTemplates();
         };
     }
@@ -627,6 +676,30 @@ public class MainForm : Form
         gmailAddressBox.Text = settings.Address;
         gmailAppPasswordBox.Text = settings.AppPassword;
         gmailExpectedSenderBox.Text = settings.ExpectedSender;
+    }
+
+    void LoadSiteLoginSettings()
+    {
+        SiteLoginSettings settings = siteLoginSettingsService.Load();
+        siteUserNameBox.Text = settings.UserName;
+        sitePasswordBox.Text = settings.Password;
+    }
+
+    void SaveSiteLoginSettings()
+    {
+        try
+        {
+            siteLoginSettingsService.Save(new SiteLoginSettings
+            {
+                UserName = siteUserNameBox.Text,
+                Password = sitePasswordBox.Text
+            });
+            ShowInfo("Site kullanıcı adı ve şifresi bu Windows kullanıcısı için şifreli olarak kaydedildi.");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Site giriş bilgileri kaydedilemedi: " + ex.Message);
+        }
     }
 
     void LoadUrlList()
@@ -847,6 +920,178 @@ public class MainForm : Form
             SendKeys.SendWait(code[index].ToString());
             await Task.Delay(80);
         }
+    }
+
+    string HomeLoginTemplateFilePath => AppDataPaths.GetDataFilePath("home_login_button.png");
+    string HomeLoginTemplateSettingsPath => AppDataPaths.GetDataFilePath("home_login_button_settings.json");
+    string LoginSubmitTemplateFilePath => AppDataPaths.GetDataFilePath("login_submit_button.png");
+    string LoginFormTemplateSettingsPath => AppDataPaths.GetDataFilePath("login_form_settings.json");
+
+    void LoadLoginTemplates()
+    {
+        homeLoginButtonTemplate?.Dispose();
+        loginSubmitButtonTemplate?.Dispose();
+        homeLoginButtonTemplate = null;
+        loginSubmitButtonTemplate = null;
+        homeLoginTemplateDefinition = new();
+        loginFormTemplateDefinition = new();
+        try
+        {
+            if (File.Exists(HomeLoginTemplateSettingsPath))
+                homeLoginTemplateDefinition = JsonSerializer.Deserialize<VisualTemplateDefinition>(File.ReadAllText(HomeLoginTemplateSettingsPath)) ?? new();
+            if (File.Exists(LoginFormTemplateSettingsPath))
+                loginFormTemplateDefinition = JsonSerializer.Deserialize<LoginFormTemplateDefinition>(File.ReadAllText(LoginFormTemplateSettingsPath)) ?? new();
+            if (File.Exists(HomeLoginTemplateFilePath))
+            {
+                using var image = new Bitmap(HomeLoginTemplateFilePath);
+                homeLoginButtonTemplate = BitmapConverter.ToMat(image);
+            }
+            if (File.Exists(LoginSubmitTemplateFilePath))
+            {
+                using var image = new Bitmap(LoginSubmitTemplateFilePath);
+                loginSubmitButtonTemplate = BitmapConverter.ToMat(image);
+            }
+        }
+        catch
+        {
+            homeLoginButtonTemplate?.Dispose();
+            loginSubmitButtonTemplate?.Dispose();
+            homeLoginButtonTemplate = null;
+            loginSubmitButtonTemplate = null;
+        }
+        captureHomeLoginButton.Text = homeLoginButtonTemplate == null ?
+            "ANA SAYFA GİRİŞ YAP GÖRSELİNİ KAYDET" : "✓ ANA SAYFA GİRİŞ YAP GÖRSELİNİ DEĞİŞTİR";
+        captureLoginFormButton.Text = loginSubmitButtonTemplate == null ?
+            "GİRİŞ FORMU ALANLARINI KAYDET" : "✓ GİRİŞ FORMU ALANLARINI DEĞİŞTİR";
+    }
+
+    void BeginCaptureHomeLoginTemplate()
+    {
+        if (scanCts != null) { ShowWarning("Önce çalışan taramayı F11 ile durdurun."); return; }
+        pendingHomeLoginTemplateCapture = true;
+        pendingLoginFormCaptureStep = 0;
+        status.Text = "Ana sayfadaki GİRİŞ YAP düğmesinin ORTASINA sol tıklayın. Bu tıklama siteye gönderilmeyecek.";
+    }
+
+    async Task CaptureHomeLoginTemplateAsync(int screenX, int screenY)
+    {
+        if (!TryFindWindowAt(screenX, screenY, out var target))
+        {
+            ShowWarning("Giriş düğmesi bir Chrome penceresi üzerinde seçilmedi.");
+            return;
+        }
+        VisualTemplateDefinition definition = await SaveTemplateAroundPointAsync(target, screenX, screenY, HomeLoginTemplateFilePath);
+        homeLoginTemplateDefinition = definition;
+        File.WriteAllText(HomeLoginTemplateSettingsPath, JsonSerializer.Serialize(definition, new JsonSerializerOptions { WriteIndented = true }));
+        LoadLoginTemplates();
+        ShowInfo("Ana sayfa GİRİŞ YAP görseli kaydedildi.");
+    }
+
+    void BeginCaptureLoginFormTemplate()
+    {
+        if (scanCts != null) { ShowWarning("Önce çalışan taramayı F11 ile durdurun."); return; }
+        pendingHomeLoginTemplateCapture = false;
+        pendingLoginFormCaptureStep = 1;
+        status.Text = "1/3: Açık giriş formunda KULLANICI ADI alanının ortasına sol tıklayın.";
+    }
+
+    async Task CaptureLoginFormStepAsync(int step, int screenX, int screenY)
+    {
+        if (step == 1)
+        {
+            pendingLoginUserNamePoint = new System.Drawing.Point(screenX, screenY);
+            pendingLoginFormCaptureStep = 2;
+            status.Text = "2/3: ŞİFRE alanının ortasına sol tıklayın.";
+            return;
+        }
+        if (step == 2)
+        {
+            pendingLoginPasswordPoint = new System.Drawing.Point(screenX, screenY);
+            pendingLoginFormCaptureStep = 3;
+            status.Text = "3/3: Formdaki kırmızı GİRİŞ YAP düğmesinin ortasına sol tıklayın.";
+            return;
+        }
+        pendingLoginFormCaptureStep = 0;
+        if (!TryFindWindowAt(screenX, screenY, out var target))
+        {
+            ShowWarning("Giriş formu Chrome penceresi üzerinde seçilmedi.");
+            return;
+        }
+        VisualTemplateDefinition submitDefinition = await SaveTemplateAroundPointAsync(target, screenX, screenY, LoginSubmitTemplateFilePath);
+        loginFormTemplateDefinition = new LoginFormTemplateDefinition
+        {
+            ClickOffsetX = submitDefinition.ClickOffsetX,
+            ClickOffsetY = submitDefinition.ClickOffsetY,
+            UserNameOffsetX = pendingLoginUserNamePoint.X - screenX,
+            UserNameOffsetY = pendingLoginUserNamePoint.Y - screenY,
+            PasswordOffsetX = pendingLoginPasswordPoint.X - screenX,
+            PasswordOffsetY = pendingLoginPasswordPoint.Y - screenY
+        };
+        File.WriteAllText(LoginFormTemplateSettingsPath, JsonSerializer.Serialize(loginFormTemplateDefinition, new JsonSerializerOptions { WriteIndented = true }));
+        LoadLoginTemplates();
+        ShowInfo("Giriş formu alanları ve GİRİŞ YAP görseli kaydedildi.");
+    }
+
+    async Task<VisualTemplateDefinition> SaveTemplateAroundPointAsync(ChromeWindow window, int screenX, int screenY, string filePath)
+    {
+        await MoveCursorAwayAndWaitAsync(window, screenX, screenY);
+        int width = Math.Min(ActionTemplateWidth, window.Width);
+        int height = Math.Min(ActionTemplateHeight, window.Height);
+        int left = Math.Clamp(screenX - width / 2, window.X, window.X + window.Width - width);
+        int top = Math.Clamp(screenY - height / 2, window.Y, window.Y + window.Height - height);
+        using var image = CaptureScreenArea(left, top, width, height);
+        image.Save(filePath, System.Drawing.Imaging.ImageFormat.Png);
+        return new VisualTemplateDefinition { ClickOffsetX = screenX - left, ClickOffsetY = screenY - top };
+    }
+
+    async Task StartAutomaticLoginAsync()
+    {
+        startAutomaticLoginButton.Enabled = false;
+        try
+        {
+            SaveSiteLoginSettings();
+            SiteLoginSettings credentials = siteLoginSettingsService.Load();
+            LoadLoginTemplates();
+            if (homeLoginButtonTemplate == null || loginSubmitButtonTemplate == null)
+                throw new InvalidOperationException("Önce ana sayfa GİRİŞ YAP görselini ve giriş formu alanlarını kaydedin.");
+
+            ScanWindows();
+            ChromeWindow? target = TryGetSelectedWindow(out var selected, out _) ? selected :
+                windows.Count == 1 ? windows[0] : null;
+            if (target == null)
+                throw new InvalidOperationException("Birden fazla Chrome penceresi açık. Giriş yapılacak pencereyi tablodan seçin.");
+            if (!await ActivateChromeWindowAsync(target.Handle))
+                throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
+
+            var homeMatch = FindVisualTemplate(target, homeLoginButtonTemplate, homeLoginTemplateDefinition, .68, target.Height);
+            if (!homeMatch.Found)
+                throw new InvalidOperationException($"Ana sayfa GİRİŞ YAP düğmesi bulunamadı. En iyi eşleşme: {homeMatch.Score:P1}. Görseli yeniden kaydedin.");
+            status.Text = "Ana sayfadaki GİRİŞ YAP düğmesi tıklanıyor...";
+            await ClickScreenPointAsync(homeMatch.ScreenX, homeMatch.ScreenY, CancellationToken.None);
+            await Task.Delay(700);
+
+            var formMatch = FindVisualTemplate(target, loginSubmitButtonTemplate, loginFormTemplateDefinition, .68, target.Height);
+            if (!formMatch.Found)
+                throw new InvalidOperationException($"Giriş formu düğmesi bulunamadı. En iyi eşleşme: {formMatch.Score:P1}. Form alanlarını yeniden kaydedin.");
+            status.Text = "Kullanıcı adı ve şifre giriliyor...";
+            await ClickScreenPointAsync(formMatch.ScreenX + loginFormTemplateDefinition.UserNameOffsetX,
+                formMatch.ScreenY + loginFormTemplateDefinition.UserNameOffsetY, CancellationToken.None);
+            SendKeys.SendWait("^a");
+            SendKeys.SendWait(credentials.UserName);
+            await ClickScreenPointAsync(formMatch.ScreenX + loginFormTemplateDefinition.PasswordOffsetX,
+                formMatch.ScreenY + loginFormTemplateDefinition.PasswordOffsetY, CancellationToken.None);
+            SendKeys.SendWait("^a");
+            SendKeys.SendWait(credentials.Password);
+            await ClickScreenPointAsync(formMatch.ScreenX, formMatch.ScreenY, CancellationToken.None);
+            status.Text = "Giriş isteği gönderildi; doğrulama kodu ekranı bekleniyor...";
+            await Task.Delay(1500);
+            await FillGmailCodeIntoOpenScreenAsync();
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Otomatik giriş başlatılamadı: " + ex.Message);
+        }
+        finally { startAutomaticLoginButton.Enabled = true; }
     }
 
     async Task ReloadUrlsAndPerformActionsAsync()
@@ -1681,6 +1926,27 @@ public class MainForm : Form
             return (IntPtr)1;
         }
 
+        if (nCode >= 0 && wParam == (IntPtr)WM_LBUTTONDOWN &&
+            (pendingHomeLoginTemplateCapture || pendingLoginFormCaptureStep > 0))
+        {
+            var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            int x = data.pt.X;
+            int y = data.pt.Y;
+            bool captureHome = pendingHomeLoginTemplateCapture;
+            int formStep = pendingLoginFormCaptureStep;
+            pendingHomeLoginTemplateCapture = false;
+            suppressActionCaptureMouseDown = true;
+
+            BeginInvoke(new Action(async () =>
+            {
+                if (captureHome)
+                    await CaptureHomeLoginTemplateAsync(x, y);
+                else
+                    await CaptureLoginFormStepAsync(formStep, x, y);
+            }));
+            return (IntPtr)1;
+        }
+
         // Seçili moda göre ilk sol tıklamadan görsel ya da koordinat kaydı al.
         if (nCode >= 0 &&
             (pendingRefreshTemplateCapture || pendingFullscreenTemplateCapture || pendingActionCaptureNumber >= 1) &&
@@ -1723,26 +1989,11 @@ public class MainForm : Form
                 int x = data.pt.X;
                 int y = data.pt.Y;
 
-                // Koordinatı her tıklamada kaydet. Her satırın ilk fiziksel
-                // tıklamasını uygulamaya geçirmiyoruz.
+                // Koordinatı her tıklamada kaydet ve gerçek tıklamanın hedefe
+                // ulaşmasına izin ver. Böylece kullanıcı adımları doğal sırayla
+                // ilerletebilir.
                 BeginInvoke(new Action(() => CaptureAutoCoordinate(x, y)));
-
-                if (suppressFirstAutoClick)
-                {
-                    suppressFirstAutoClick = false;
-                    suppressFirstAutoMouseUp = true;
-                    return (IntPtr)1;
-                }
-
-                // İlk tıklamadan sonraki tıklamalar normal şekilde hedefe ulaşır.
                 return CallNextHookEx(mouseHook, nCode, wParam, lParam);
-            }
-
-            // İlk tıklamanın mouse-up olayını da yut; sonraki mouse-up olayları serbest.
-            if (wParam == (IntPtr)WM_LBUTTONUP && suppressFirstAutoMouseUp)
-            {
-                suppressFirstAutoMouseUp = false;
-                return (IntPtr)1;
             }
         }
 
@@ -1834,8 +2085,6 @@ public class MainForm : Form
 
         autoCoordinateRow = 0;
         autoCaptureStep = 0;
-        suppressFirstAutoClick = true;
-        suppressFirstAutoMouseUp = false;
         autoCoordinateCapture = true;
         useVisualActionsCheckBox.Enabled = false;
         autoCoordinateButton.Text = "⏹ KOORDİNAT TOPLAMAYI DURDUR";
@@ -1845,8 +2094,6 @@ public class MainForm : Form
     void StopAutoCoordinateCapture(string message)
     {
         autoCoordinateCapture = false;
-        suppressFirstAutoClick = false;
-        suppressFirstAutoMouseUp = false;
         useVisualActionsCheckBox.Enabled = scanCts == null;
         ApplyActionModeUi();
         status.Text = message;
@@ -1857,10 +2104,7 @@ public class MainForm : Form
         if (!autoCoordinateCapture) return;
         if (autoCoordinateRow >= windows.Count)
         {
-            string completedMessage = useVisualActions
-                ? "Tüm pencerelerin yenileme noktaları tamamlandı."
-                : "Tüm pencerelerin yenileme ve 3 işlem koordinatı tamamlandı.";
-            StopAutoCoordinateCapture(completedMessage);
+            StopAutoCoordinateCapture("Tüm pencerelerin 3 işlem koordinatı tamamlandı.");
             SaveCoordinates();
             return;
         }
@@ -1872,15 +2116,12 @@ public class MainForm : Form
             grid.CurrentCell = grid.Rows[autoCoordinateRow].Cells[0];
         }
 
-        string step = useVisualActions
-            ? "YENİLEME"
-            : autoCaptureStep switch
-            {
-                0 => "YENİLEME",
-                1 => "İŞLEM 1",
-                2 => "İŞLEM 2",
-                _ => "İŞLEM 3"
-            };
+        string step = autoCaptureStep switch
+        {
+            0 => "İŞLEM 1",
+            1 => "İŞLEM 2",
+            _ => "İŞLEM 3"
+        };
         status.Text =
             $"Pencere {autoCoordinateRow + 1}/{windows.Count} — Mouse'u {step} noktasına götürün ve SOL TIKLAYIN.";
     }
@@ -1895,37 +2136,30 @@ public class MainForm : Form
         switch (autoCaptureStep)
         {
             case 0:
-                w.RefreshRX = rx; w.RefreshRY = ry;
-                w.RefreshOffsetX = screenX - w.X;
-                w.RefreshOffsetY = screenY - w.Y;
-                grid.Rows[row].Cells["Yenile RX"].Value = FormatRel(rx);
-                grid.Rows[row].Cells["Yenile RY"].Value = FormatRel(ry);
-                break;
-            case 1:
                 w.Click1RX = rx; w.Click1RY = ry;
                 grid.Rows[row].Cells["İşlem 1 RX"].Value = FormatRel(rx);
                 grid.Rows[row].Cells["İşlem 1 RY"].Value = FormatRel(ry);
                 break;
-            case 2:
+            case 1:
                 w.Click2RX = rx; w.Click2RY = ry;
                 grid.Rows[row].Cells["İşlem 2 RX"].Value = FormatRel(rx);
                 grid.Rows[row].Cells["İşlem 2 RY"].Value = FormatRel(ry);
                 break;
-            case 3:
+            case 2:
                 w.Click3RX = rx; w.Click3RY = ry;
                 grid.Rows[row].Cells["İşlem 3 RX"].Value = FormatRel(rx);
                 grid.Rows[row].Cells["İşlem 3 RY"].Value = FormatRel(ry);
                 break;
         }
 
-        if (useVisualActions || ++autoCaptureStep >= 4)
+        // Her tıklamayı anında kalıcılaştır. Toplama yarıda durdurulsa veya
+        // uygulama kapanırsa, o ana kadar alınan koordinatlar kaybolmaz.
+        SaveCoordinates();
+
+        if (++autoCaptureStep >= 3)
         {
             autoCaptureStep = 0;
             autoCoordinateRow++;
-
-            // Her yeni pencereye geçildiğinde yenileme tıklamasını engelle.
-            suppressFirstAutoClick = true;
-            suppressFirstAutoMouseUp = false;
         }
 
         CaptureAutoCoordinateInstruction();
@@ -2182,11 +2416,7 @@ public class MainForm : Form
         }
 
         if (!autoCoordinateCapture)
-        {
-            autoCoordinateButton.Text = useVisualActions
-                ? "⚡ YENİLEME NOKTALARINI TOPLA"
-                : "⚡ TÜM KOORDİNATLARI TOPLA";
-        }
+            autoCoordinateButton.Text = "⚡ TÜM KOORDİNATLARI TOPLA";
 
         UpdateFullscreenTemplateButtonLabel();
         UpdateActionTemplateButtonLabels();
@@ -3790,10 +4020,18 @@ public class MainForm : Form
         public double? RefreshRX,RefreshRY,Click1RX,Click1RY,Click2RX,Click2RY,Click3RX,Click3RY; public int? RefreshOffsetX, RefreshOffsetY;
     }
 
-    sealed class VisualTemplateDefinition
+    class VisualTemplateDefinition
     {
         public int ClickOffsetX { get; set; }
         public int ClickOffsetY { get; set; }
+    }
+
+    sealed class LoginFormTemplateDefinition : VisualTemplateDefinition
+    {
+        public int UserNameOffsetX { get; set; }
+        public int UserNameOffsetY { get; set; }
+        public int PasswordOffsetX { get; set; }
+        public int PasswordOffsetY { get; set; }
     }
 
     sealed class SessionRecord
