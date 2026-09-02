@@ -876,7 +876,17 @@ public class MainForm : Form
                 {
                     loggedIn = true;
                     ShowInfo($"Giriş doğrulandı. Kod {attempt}. denemede kabul edildi.");
-                    await ReloadUrlsAndPerformActionsAsync();
+                    // Giriş, tek pencerede de güvenle tamamlanabilmeli. URL ve
+                    // üç işlem sadece tüm kayıtlı pencereler açıkken çalışır.
+                    ScanWindows();
+                    int savedUrlCount = urlListService.Load().Remainders.Count(
+                        remainder => !string.IsNullOrWhiteSpace(remainder));
+                    if (savedUrlCount > 0 && windows.Count == savedUrlCount)
+                        await ReloadUrlsAndPerformActionsAsync();
+                    else
+                        ShowInfo(
+                            $"Giriş doğrulandı. URL yenileme atlandı: açık Chrome penceresi {windows.Count}, " +
+                            $"kayıtlı URL {savedUrlCount}. Tüm pencereleri açtığınızda işlem otomatik uygulanacaktır.");
                     break;
                 }
 
