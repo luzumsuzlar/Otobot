@@ -910,7 +910,9 @@ public class MainForm : Form
         int right = (int)(image.Width * .80);
         int top = (int)(image.Height * .20);
         int bottom = (int)(image.Height * .78);
-        int minimumColumnPixels = Math.Max(12, (bottom - top) / 10);
+        // Kod kutuları yaklaşık 50 piksel yüksekliğinde kalır; Chrome pencere
+        // yüksekliği büyüdükçe eşik yükseltilirse yeni form yanlışlıkla elenir.
+        int minimumColumnPixels = Math.Clamp((bottom - top) / 20, 10, 28);
         var runs = new List<(int Start, int End)>();
         int runStart = -1;
 
