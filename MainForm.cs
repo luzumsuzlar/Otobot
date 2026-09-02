@@ -876,17 +876,7 @@ public class MainForm : Form
                 {
                     loggedIn = true;
                     ShowInfo($"Giriş doğrulandı. Kod {attempt}. denemede kabul edildi.");
-                    // Giriş, tek pencerede de güvenle tamamlanabilmeli. URL ve
-                    // üç işlem sadece tüm kayıtlı pencereler açıkken çalışır.
-                    ScanWindows();
-                    int savedUrlCount = urlListService.Load().Remainders.Count(
-                        remainder => !string.IsNullOrWhiteSpace(remainder));
-                    if (savedUrlCount > 0 && windows.Count == savedUrlCount)
-                        await ReloadUrlsAndPerformActionsAsync();
-                    else
-                        ShowInfo(
-                            $"Giriş doğrulandı. URL yenileme atlandı: açık Chrome penceresi {windows.Count}, " +
-                            $"kayıtlı URL {savedUrlCount}. Tüm pencereleri açtığınızda işlem otomatik uygulanacaktır.");
+                    await ReloadUrlsAndPerformActionsAsync();
                     break;
                 }
 
@@ -1205,6 +1195,16 @@ public class MainForm : Form
             throw new InvalidOperationException("URL Listesi boş. Önce PENCERELERİ KAYDET ile URL'leri kaydedin.");
 
         ScanWindows();
+        if (windows.Count < urls.Count)
+        {
+            int missing = urls.Count - windows.Count;
+            status.Text = $"Giriş sonrası {missing} eksik Chrome penceresi açılıyor...";
+            foreach (string url in urls.Skip(windows.Count))
+                await OpenChromeWindowForUrlAsync(url);
+
+            ScanWindows();
+            ArrangeRestoredWindowsInGrid(urls.Count);
+        }
         if (windows.Count != urls.Count)
             throw new InvalidOperationException(
                 $"Açık Chrome penceresi ({windows.Count}) ile URL Listesi ({urls.Count}) eşleşmiyor. " +
@@ -3429,6 +3429,30 @@ public class MainForm : Form
         MoveWindow(newHandle, record.X, record.Y, record.Width, record.Height, true);
         SetForegroundWindow(newHandle);
         await Task.Delay(500);
+    }
+
+    async Task OpenChromeWindowForUrlAsync(string url)
+    {
+        string? chromeExe = FindChromeExe();
+        if (chromeExe == null)
+            throw new InvalidOperationException("Chrome.exe bulunamadı.");
+
+        var before = GetChromeWindowHandles();
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = chromeExe,
+            Arguments = $"--new-window \"{url.Replace("\\\"", "\\\\\"")}\"",
+            UseShellExecute = true
+        });
+
+        for (int attempt = 0; attempt < 60; attempt++)
+        {
+            await Task.Delay(250);
+            if (GetChromeWindowHandles().Any(handle => !before.Contains(handle)))
+                return;
+        }
+
+        throw new InvalidOperationException("Eksik Chrome penceresi açılamadı.");
     }
 
     static HashSet<IntPtr> GetChromeWindowHandles()
