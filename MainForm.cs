@@ -137,6 +137,10 @@ public class MainForm : Form
     int actionClickDelayMs = 500;
     bool useVisualActions = true;
     bool urlListLoading;
+    IntPtr loginWindowHandle = IntPtr.Zero;
+    DateTime lastLoginWindowRefreshUtc = DateTime.MinValue;
+    readonly System.Windows.Forms.Timer loginWindowMonitorTimer = new() { Interval = 60_000 };
+    bool loginWindowMonitorRunning;
 
     int selectedClickNumber = 1;
     IntPtr keyboardHook = IntPtr.Zero;
@@ -178,6 +182,7 @@ public class MainForm : Form
         Width = 1250; Height = 760; StartPosition = FormStartPosition.CenterScreen;
         var applicationIcon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (applicationIcon != null) Icon = applicationIcon;
+        loginWindowMonitorTimer.Tick += async (_, _) => await MonitorLoginWindowAsync();
 
         scanButton.Text = "Chrome Pencerelerini Tara"; scanButton.AutoSize = true; scanButton.Click += (_, _) => ScanWindows();
         detectButton.Text = "Hata Ekranlarını Tara"; detectButton.AutoSize = true; detectButton.Click += (_, _) => DetectErrors();
@@ -634,6 +639,7 @@ public class MainForm : Form
         };
         FormClosed += (_, _) =>
         {
+            loginWindowMonitorTimer.Stop();
             closeButtonTemplate?.Dispose();
             fullscreenButtonTemplate?.Dispose();
             homeLoginButtonTemplate?.Dispose();
@@ -875,6 +881,9 @@ public class MainForm : Form
                 if (!IsVerificationCodeScreen(target))
                 {
                     loggedIn = true;
+                    loginWindowHandle = target.Handle;
+                    lastLoginWindowRefreshUtc = DateTime.UtcNow;
+                    loginWindowMonitorTimer.Start();
                     ShowInfo($"Giriş doğrulandı. Kod {attempt}. denemede kabul edildi.");
                     await ReloadUrlsAndPerformActionsAsync();
                     break;
@@ -1131,7 +1140,7 @@ public class MainForm : Form
         return new VisualTemplateDefinition { ClickOffsetX = screenX - left, ClickOffsetY = screenY - top };
     }
 
-    async Task StartAutomaticLoginAsync()
+    async Task StartAutomaticLoginAsync(ChromeWindow? forcedTarget = null)
     {
         startAutomaticLoginButton.Enabled = false;
         try
@@ -1143,8 +1152,8 @@ public class MainForm : Form
                 throw new InvalidOperationException("Önce ana sayfa GİRİŞ YAP görselini ve giriş formu alanlarını kaydedin.");
 
             ScanWindows();
-            ChromeWindow? target = TryGetSelectedWindow(out var selected, out _) ? selected :
-                windows.Count == 1 ? windows[0] : null;
+            ChromeWindow? target = forcedTarget ?? (TryGetSelectedWindow(out var selected, out _) ? selected :
+                windows.Count == 1 ? windows[0] : null);
             if (target == null)
                 throw new InvalidOperationException("Birden fazla Chrome penceresi açık. Giriş yapılacak pencereyi tablodan seçin.");
             if (!await ActivateChromeWindowAsync(target.Handle))
@@ -1180,6 +1189,53 @@ public class MainForm : Form
         finally { startAutomaticLoginButton.Enabled = true; }
     }
 
+    async Task MonitorLoginWindowAsync()
+    {
+        if (loginWindowMonitorRunning || loginWindowHandle == IntPtr.Zero) return;
+        loginWindowMonitorRunning = true;
+        loginWindowMonitorTimer.Stop();
+        try
+        {
+            ScanWindows();
+            ChromeWindow? window = windows.FirstOrDefault(item => item.Handle == loginWindowHandle);
+            if (window == null)
+            {
+                status.Text = "Oturum penceresi kapatıldı; 30 dakikalık oturum takibi durduruldu.";
+                loginWindowHandle = IntPtr.Zero;
+                return;
+            }
+
+            LoadLoginTemplates();
+            if (homeLoginButtonTemplate != null)
+            {
+                var loginButton = FindVisualTemplate(window, homeLoginButtonTemplate,
+                    homeLoginTemplateDefinition, .68, window.Height);
+                if (loginButton.Found)
+                {
+                    status.Text = "Oturum penceresinde GİRİŞ YAP bulundu; otomatik giriş başlatılıyor...";
+                    await StartAutomaticLoginAsync(window);
+                    return;
+                }
+            }
+
+            if (DateTime.UtcNow - lastLoginWindowRefreshUtc >= TimeSpan.FromMinutes(30))
+            {
+                status.Text = "Oturum penceresi 30 dakikalık yenileme için yenileniyor...";
+                await ClickRefreshAsync(window, CancellationToken.None);
+                lastLoginWindowRefreshUtc = DateTime.UtcNow;
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Oturum penceresi kontrol edilemedi: " + ex.Message);
+        }
+        finally
+        {
+            loginWindowMonitorRunning = false;
+            if (loginWindowHandle != IntPtr.Zero) loginWindowMonitorTimer.Start();
+        }
+    }
+
     async Task ReloadUrlsAndPerformActionsAsync()
     {
         UrlListSettings urlList = urlListService.Load();
@@ -1211,7 +1267,7 @@ public class MainForm : Form
                 "Güvenli eşleştirme için sayılar aynı olmalı.");
         if (useVisualActions && !ActionTemplatesReady())
             throw new InvalidOperationException("Üç işlem görseli eksik. Önce işlem görsellerini kaydedin.");
-        if (!useVisualActions && windows.Any(window =>
+        if (!useVisualActions && windows.Where(window => window.Handle != loginWindowHandle).Any(window =>
             !window.Click1RX.HasValue || !window.Click1RY.HasValue ||
             !window.Click2RX.HasValue || !window.Click2RY.HasValue ||
             !window.Click3RX.HasValue || !window.Click3RY.HasValue))
@@ -1232,6 +1288,11 @@ public class MainForm : Form
         {
             try
             {
+                if (windows[index].Handle == loginWindowHandle)
+                {
+                    UpdateRow(index, "OTURUM PENCERESİ — 3 İŞLEMDEN MUAF", 0, Color.LightSteelBlue);
+                    continue;
+                }
                 status.Text = $"Pencere {index + 1}/{windows.Count}: 3 işlem uygulanıyor...";
                 if (useVisualActions)
                     await PerformVisualActionsAsync(windows[index], CancellationToken.None);
