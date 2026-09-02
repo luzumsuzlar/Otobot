@@ -823,7 +823,7 @@ public class MainForm : Form
         }
     }
 
-    async Task FillGmailCodeIntoOpenScreenAsync()
+    async Task FillGmailCodeIntoOpenScreenAsync(bool waitForVerificationScreen = false)
     {
         fillGmailCodeButton.Enabled = false;
         try
@@ -840,8 +840,20 @@ public class MainForm : Form
             if (!await ActivateChromeWindowAsync(target.Handle))
                 throw new InvalidOperationException("Chrome penceresi öne getirilemedi.");
 
-            if (!IsVerificationCodeScreen(target))
-                throw new InvalidOperationException("Bu pencerede altı haneli doğrulama kodu ekranı bulunamadı.");
+            bool codeScreenFound = IsVerificationCodeScreen(target);
+            if (!codeScreenFound && waitForVerificationScreen)
+            {
+                for (int attempt = 1; attempt <= 5 && !codeScreenFound; attempt++)
+                {
+                    status.Text = $"Doğrulama kodu ekranı henüz gelmedi. {attempt}/5 — 30 saniye sonra yeniden kontrol edilecek.";
+                    await Task.Delay(TimeSpan.FromSeconds(30));
+                    codeScreenFound = IsVerificationCodeScreen(target);
+                }
+            }
+            if (!codeScreenFound)
+                throw new InvalidOperationException(waitForVerificationScreen
+                    ? "Doğrulama kodu ekranı 5 kez, 30 saniye arayla kontrol edildi ancak bulunamadı."
+                    : "Bu pencerede altı haneli doğrulama kodu ekranı bulunamadı.");
 
             var settings = new GmailCodeSettings
             {
@@ -1084,8 +1096,7 @@ public class MainForm : Form
             SendKeys.SendWait(credentials.Password);
             await ClickScreenPointAsync(formMatch.ScreenX, formMatch.ScreenY, CancellationToken.None);
             status.Text = "Giriş isteği gönderildi; doğrulama kodu ekranı bekleniyor...";
-            await Task.Delay(1500);
-            await FillGmailCodeIntoOpenScreenAsync();
+            await FillGmailCodeIntoOpenScreenAsync(waitForVerificationScreen: true);
         }
         catch (Exception ex)
         {
