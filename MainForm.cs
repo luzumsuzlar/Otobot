@@ -900,35 +900,108 @@ public class MainForm : Form
     static bool IsVerificationCodeScreen(ChromeWindow window)
     {
         using Bitmap image = CaptureScreenArea(window.X, window.Y, window.Width, window.Height);
-        int left = (int)(image.Width * .35);
-        int right = (int)(image.Width * .66);
-        int top = (int)(image.Height * .60);
-        int bottom = (int)(image.Height * .82);
-        int blueBoxes = 0;
-        int redButton = 0;
-        for (int y = top; y < bottom; y += 2)
+        return TryFindVerificationCodeInputs(image, out _);
+    }
+
+    static bool TryFindVerificationCodeInputs(Bitmap image, out List<System.Drawing.Point> inputs)
+    {
+        inputs = [];
+        int left = (int)(image.Width * .20);
+        int right = (int)(image.Width * .80);
+        int top = (int)(image.Height * .20);
+        int bottom = (int)(image.Height * .78);
+        int minimumColumnPixels = Math.Max(12, (bottom - top) / 10);
+        var runs = new List<(int Start, int End)>();
+        int runStart = -1;
+
+        for (int x = left; x < right; x++)
         {
-            for (int x = left; x < right; x += 2)
+            int bluePixels = 0;
+            for (int y = top; y < bottom; y++)
             {
                 Color pixel = image.GetPixel(x, y);
-                if (pixel.B > pixel.R + 12 && pixel.B > pixel.G + 5 && pixel.B > 75)
-                    blueBoxes++;
-                if (pixel.R > 145 && pixel.G < 95 && pixel.B < 95)
-                    redButton++;
+                if (IsCodeBoxBlue(pixel)) bluePixels++;
+            }
+            if (bluePixels >= minimumColumnPixels && runStart < 0) runStart = x;
+            if (bluePixels < minimumColumnPixels && runStart >= 0)
+            {
+                if (x - runStart >= Math.Max(14, image.Width / 65)) runs.Add((runStart, x - 1));
+                runStart = -1;
             }
         }
-        return blueBoxes >= 18 && redButton >= 45;
+        if (runStart >= 0 && right - runStart >= Math.Max(14, image.Width / 65))
+            runs.Add((runStart, right - 1));
+
+        // Yeni pencerede altı aynı aralıklı kod kutusu vardır. Bu kontrol, iki
+        // alanlı kullanıcı adı/şifre formunun kod ekranı sanılmasını önler.
+        for (int start = 0; start + 5 < runs.Count; start++)
+        {
+            double[] gaps = Enumerable.Range(start, 5)
+                .Select(index => (runs[index + 1].Start + runs[index + 1].End - runs[index].Start - runs[index].End) / 2.0)
+                .ToArray();
+            if (gaps.Any(gap => gap < 12 || gap > image.Width * .22)) continue;
+            if (gaps.Max() - gaps.Min() > gaps.Average() * .45) continue;
+
+            var candidate = new List<System.Drawing.Point>(6);
+            foreach (var run in runs.Skip(start).Take(6))
+            {
+                int centerX = (run.Start + run.End) / 2;
+                int bestStart = -1, bestEnd = -1, currentStart = -1;
+                for (int y = top; y < bottom; y++)
+                {
+                    int count = 0;
+                    for (int x = run.Start; x <= run.End; x++)
+                        if (IsCodeBoxBlue(image.GetPixel(x, y))) count++;
+                    if (count >= Math.Max(6, (run.End - run.Start + 1) / 2) && currentStart < 0)
+                        currentStart = y;
+                    if ((count < Math.Max(6, (run.End - run.Start + 1) / 2) || y == bottom - 1) && currentStart >= 0)
+                    {
+                        int end = count < Math.Max(6, (run.End - run.Start + 1) / 2) ? y - 1 : y;
+                        if (end - currentStart > bestEnd - bestStart)
+                        {
+                            bestStart = currentStart;
+                            bestEnd = end;
+                        }
+                        currentStart = -1;
+                    }
+                }
+                if (bestStart < 0) { candidate.Clear(); break; }
+                candidate.Add(new System.Drawing.Point(centerX, (bestStart + bestEnd) / 2));
+            }
+
+            if (candidate.Count == 6 && HasLoginButtonRed(image, left, right, top, bottom))
+            {
+                inputs = candidate;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool IsCodeBoxBlue(Color color) =>
+        color.B > color.R + 10 && color.B > color.G + 5 && color.B >= 60;
+
+    static bool HasLoginButtonRed(Bitmap image, int left, int right, int top, int bottom)
+    {
+        int redPixels = 0;
+        for (int y = top; y < bottom; y += 2)
+        for (int x = left; x < right; x += 2)
+        {
+            Color pixel = image.GetPixel(x, y);
+            if (pixel.R > 160 && pixel.G < 100 && pixel.B < 100) redPixels++;
+        }
+        return redPixels >= 70;
     }
 
     static async Task WriteVerificationCodeAsync(ChromeWindow target, string code)
     {
-        // Sayfa kodu tek alan gibi gösterse de aslında altı ayrı input kullanıyor.
-        // Her haneyi kendi kutusuna yazmak yarım kalan girişleri engeller.
-        for (int index = 0; index < code.Length; index++)
+        using Bitmap image = CaptureScreenArea(target.X, target.Y, target.Width, target.Height);
+        if (!TryFindVerificationCodeInputs(image, out List<System.Drawing.Point> inputs))
+            throw new InvalidOperationException("Yeni doğrulama ekranındaki altı kod kutusu bulunamadı.");
+
+        for (int index = 0; index < Math.Min(code.Length, inputs.Count); index++)
         {
-            int inputX = target.X + (int)Math.Round(target.Width * (.407 + index * .031));
-            int inputY = target.Y + (int)Math.Round(target.Height * .68);
-            await ClickScreenPointAsync(inputX, inputY, CancellationToken.None);
+            await ClickScreenPointAsync(target.X + inputs[index].X, target.Y + inputs[index].Y, CancellationToken.None);
             SendKeys.SendWait(code[index].ToString());
             await Task.Delay(80);
         }
