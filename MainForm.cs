@@ -906,13 +906,13 @@ public class MainForm : Form
     static bool TryFindVerificationCodeInputs(Bitmap image, out List<System.Drawing.Point> inputs)
     {
         inputs = [];
-        int left = (int)(image.Width * .20);
-        int right = (int)(image.Width * .80);
-        int top = (int)(image.Height * .20);
-        int bottom = (int)(image.Height * .78);
+        int left = (int)(image.Width * .10);
+        int right = (int)(image.Width * .90);
+        int top = (int)(image.Height * .15);
+        int bottom = (int)(image.Height * .85);
         // Kod kutuları yaklaşık 50 piksel yüksekliğinde kalır; Chrome pencere
         // yüksekliği büyüdükçe eşik yükseltilirse yeni form yanlışlıkla elenir.
-        int minimumColumnPixels = Math.Clamp((bottom - top) / 20, 10, 28);
+        int minimumColumnPixels = Math.Clamp((bottom - top) / 28, 4, 20);
         var runs = new List<(int Start, int End)>();
         int runStart = -1;
 
@@ -927,11 +927,11 @@ public class MainForm : Form
             if (bluePixels >= minimumColumnPixels && runStart < 0) runStart = x;
             if (bluePixels < minimumColumnPixels && runStart >= 0)
             {
-                if (x - runStart >= Math.Max(14, image.Width / 65)) runs.Add((runStart, x - 1));
+                if (x - runStart >= Math.Max(8, image.Width / 100)) runs.Add((runStart, x - 1));
                 runStart = -1;
             }
         }
-        if (runStart >= 0 && right - runStart >= Math.Max(14, image.Width / 65))
+        if (runStart >= 0 && right - runStart >= Math.Max(8, image.Width / 100))
             runs.Add((runStart, right - 1));
 
         // Yeni pencerede altı aynı aralıklı kod kutusu vardır. Bu kontrol, iki
@@ -941,8 +941,8 @@ public class MainForm : Form
             double[] gaps = Enumerable.Range(start, 5)
                 .Select(index => (runs[index + 1].Start + runs[index + 1].End - runs[index].Start - runs[index].End) / 2.0)
                 .ToArray();
-            if (gaps.Any(gap => gap < 12 || gap > image.Width * .22)) continue;
-            if (gaps.Max() - gaps.Min() > gaps.Average() * .45) continue;
+            if (gaps.Any(gap => gap < 4 || gap > image.Width * .30)) continue;
+            if (gaps.Max() - gaps.Min() > gaps.Average() * .80) continue;
 
             var candidate = new List<System.Drawing.Point>(6);
             foreach (var run in runs.Skip(start).Take(6))
@@ -981,7 +981,7 @@ public class MainForm : Form
     }
 
     static bool IsCodeBoxBlue(Color color) =>
-        color.B > color.R + 10 && color.B > color.G + 5 && color.B >= 60;
+        color.B > color.R + 6 && color.B > color.G + 3 && color.B >= 45;
 
     static bool HasLoginButtonRed(Bitmap image, int left, int right, int top, int bottom)
     {
