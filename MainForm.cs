@@ -111,6 +111,7 @@ public class MainForm : Form
     readonly TextBox telegramTokenBox = new();
     readonly TextBox telegramChatIdBox = new();
     readonly Button saveTelegramSettingsButton = new();
+    readonly Button testTelegramButton = new();
     readonly Button captureTournamentButton = new();
     readonly Button checkTournamentButton = new();
     readonly TelegramSettingsService telegramSettingsService = new();
@@ -518,9 +519,9 @@ public class MainForm : Form
             Text = "Turnuva Başlangıç Bildirimi",
             Dock = DockStyle.Top,
             Padding = new Padding(12),
-            Height = 190
+            Height = 220
         };
-        var tournamentPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 5 };
+        var tournamentPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 };
         tournamentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         tournamentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         telegramTokenBox.Dock = DockStyle.Fill;
@@ -536,16 +537,20 @@ public class MainForm : Form
         saveTelegramSettingsButton.AutoSize = true;
         saveTelegramSettingsButton.Click += (_, _) => SaveTelegramSettings();
         tournamentPanel.Controls.Add(saveTelegramSettingsButton, 1, 2);
+        testTelegramButton.Text = "TEST MESAJI GÖNDER";
+        testTelegramButton.AutoSize = true;
+        testTelegramButton.Click += async (_, _) => await TestTelegramAsync();
+        tournamentPanel.Controls.Add(testTelegramButton, 1, 3);
         captureTournamentButton.Text = "KUPA GÖRSELİNİ KAYDET";
         captureTournamentButton.AutoSize = true;
         captureTournamentButton.Click += (_, _) => BeginCaptureTournamentTemplate();
-        tournamentPanel.Controls.Add(captureTournamentButton, 1, 3);
+        tournamentPanel.Controls.Add(captureTournamentButton, 1, 4);
         tournamentPanel.Controls.Add(new Label
         {
             Text = "Pencereler sekmesinden hedef Chrome penceresini seçin. Kontrol: sayfayı yeniler, gerekirse giriş yapar, kayıtlı URL'ye döner ve kupa görselini arar.",
             AutoSize = true,
             MaximumSize = new System.Drawing.Size(760, 0)
-        }, 1, 4);
+        }, 1, 5);
         tournamentGroup.Controls.Add(tournamentPanel);
         settingsPanel.Controls.Add(tournamentGroup, 0, 11);
         settingsPanel.SetColumnSpan(tournamentGroup, 2);
@@ -784,6 +789,37 @@ public class MainForm : Form
         catch (Exception ex)
         {
             ShowWarning("Telegram ayarları kaydedilemedi: " + ex.Message);
+        }
+    }
+
+    async Task TestTelegramAsync()
+    {
+        TelegramSettings settings = new()
+        {
+            BotToken = telegramTokenBox.Text,
+            ChatId = telegramChatIdBox.Text
+        };
+        if (string.IsNullOrWhiteSpace(settings.BotToken) || string.IsNullOrWhiteSpace(settings.ChatId))
+        {
+            ShowWarning("Test için Telegram bot tokeni ve sohbet kimliği doldurulmalı.");
+            return;
+        }
+
+        testTelegramButton.Enabled = false;
+        try
+        {
+            telegramSettingsService.Save(settings);
+            await telegramService.SendMessageAsync(settings.BotToken, settings.ChatId,
+                "✅ Otobot Telegram bağlantı testi başarılı.", CancellationToken.None);
+            ShowInfo("Telegram test mesajı gönderildi.");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Telegram test mesajı gönderilemedi: " + ex.Message);
+        }
+        finally
+        {
+            testTelegramButton.Enabled = true;
         }
     }
 
