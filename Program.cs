@@ -13,9 +13,12 @@ namespace Otobot
         [STAThread]
         static void Main()
         {
-            // Velopack must run before WinForms initialization so it can finish
-            // install/update lifecycle operations without opening the main UI.
+            // Velopack yalnızca dağıtım derlemelerinde çalışır. Böylece kaynak
+            // klasörden başlatılan Debug sürümü, bilgisayardaki eski kurulu
+            // sürüme yönlenmeden doğrudan test edilebilir.
+#if !DEBUG
             VelopackApp.Build().Run();
+#endif
 
             SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             ApplicationConfiguration.Initialize();
