@@ -108,6 +108,13 @@ public class MainForm : Form
     readonly Button captureLoginFormButton = new();
     readonly Button startAutomaticLoginButton = new();
     readonly SiteLoginSettingsService siteLoginSettingsService = new();
+    readonly TextBox telegramTokenBox = new();
+    readonly TextBox telegramChatIdBox = new();
+    readonly Button saveTelegramSettingsButton = new();
+    readonly Button captureTournamentButton = new();
+    readonly Button checkTournamentButton = new();
+    readonly TelegramSettingsService telegramSettingsService = new();
+    readonly TelegramService telegramService = new();
     readonly TextBox urlListBaseAddressBox = new();
     readonly DataGridView urlListGrid = new();
     readonly Button saveUrlListButton = new();
@@ -126,6 +133,8 @@ public class MainForm : Form
     VisualTemplateDefinition homeLoginTemplateDefinition = new();
     Mat? loginSubmitButtonTemplate;
     LoginFormTemplateDefinition loginFormTemplateDefinition = new();
+    Mat? tournamentButtonTemplate;
+    VisualTemplateDefinition tournamentTemplateDefinition = new();
     readonly Mat?[] actionButtonTemplates = new Mat?[3];
     VisualTemplateDefinition[] actionTemplateDefinitions =
     [
@@ -155,6 +164,7 @@ public class MainForm : Form
     bool pendingActionCaptureUsesVisual = true;
     bool pendingRefreshTemplateCapture = false;
     bool pendingFullscreenTemplateCapture = false;
+    bool pendingTournamentTemplateCapture = false;
     bool pendingHomeLoginTemplateCapture = false;
     int pendingLoginFormCaptureStep = 0;
     System.Drawing.Point pendingLoginUserNamePoint;
@@ -191,6 +201,11 @@ public class MainForm : Form
         startButton.Text = "BAŞLAT (F12)";
         startButton.AutoSize = true;
         startButton.Click += (_, _) => StartContinuousScan();
+
+        checkTournamentButton.Text = "TURNUVA BAŞLANGICINI KONTROL ET";
+        checkTournamentButton.AutoSize = true;
+        checkTournamentButton.Font = new Font(Font.FontFamily, 9, FontStyle.Bold);
+        checkTournamentButton.Click += async (_, _) => await CheckTournamentStartAsync();
 
         stopButton.Text = "DURDUR (F11)";
         stopButton.AutoSize = true;
@@ -311,7 +326,7 @@ public class MainForm : Form
 
         // Bot kontrolleri Pencereler sekmesinde.
         foreach (Control c in new Control[] {
-            startButton, stopButton, useVisualActionsCheckBox,
+            startButton, stopButton, checkTournamentButton, useVisualActionsCheckBox,
             scanButton, detectButton, errorRefreshButton,
             refreshAllButton, captureClickButton,
             autoCoordinateButton,
@@ -498,12 +513,49 @@ public class MainForm : Form
         settingsPanel.Controls.Add(gmailGroup, 0, 10);
         settingsPanel.SetColumnSpan(gmailGroup, 2);
 
+        var tournamentGroup = new GroupBox
+        {
+            Text = "Turnuva Başlangıç Bildirimi",
+            Dock = DockStyle.Top,
+            Padding = new Padding(12),
+            Height = 190
+        };
+        var tournamentPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 5 };
+        tournamentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+        tournamentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        telegramTokenBox.Dock = DockStyle.Fill;
+        telegramTokenBox.UseSystemPasswordChar = true;
+        telegramTokenBox.PlaceholderText = "BotFather bot tokeni";
+        telegramChatIdBox.Dock = DockStyle.Fill;
+        telegramChatIdBox.PlaceholderText = "Telegram sohbet kimliği";
+        tournamentPanel.Controls.Add(new Label { Text = "Telegram bot tokeni:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        tournamentPanel.Controls.Add(telegramTokenBox, 1, 0);
+        tournamentPanel.Controls.Add(new Label { Text = "Telegram sohbet kimliği:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        tournamentPanel.Controls.Add(telegramChatIdBox, 1, 1);
+        saveTelegramSettingsButton.Text = "TELEGRAM AYARLARINI GÜVENLE KAYDET";
+        saveTelegramSettingsButton.AutoSize = true;
+        saveTelegramSettingsButton.Click += (_, _) => SaveTelegramSettings();
+        tournamentPanel.Controls.Add(saveTelegramSettingsButton, 1, 2);
+        captureTournamentButton.Text = "KUPA GÖRSELİNİ KAYDET";
+        captureTournamentButton.AutoSize = true;
+        captureTournamentButton.Click += (_, _) => BeginCaptureTournamentTemplate();
+        tournamentPanel.Controls.Add(captureTournamentButton, 1, 3);
+        tournamentPanel.Controls.Add(new Label
+        {
+            Text = "Pencereler sekmesinden hedef Chrome penceresini seçin. Kontrol: sayfayı yeniler, gerekirse giriş yapar, kayıtlı URL'ye döner ve kupa görselini arar.",
+            AutoSize = true,
+            MaximumSize = new System.Drawing.Size(760, 0)
+        }, 1, 4);
+        tournamentGroup.Controls.Add(tournamentPanel);
+        settingsPanel.Controls.Add(tournamentGroup, 0, 11);
+        settingsPanel.SetColumnSpan(tournamentGroup, 2);
+
         settingsPanel.Controls.Add(new Label
         {
             Text = $"Kurulu sürüm: {Application.ProductVersion}",
             AutoSize = true,
             Anchor = AnchorStyles.Left
-        }, 0, 11);
+        }, 0, 12);
         checkUpdateButton.Text = "GÜNCELLEME DENETLE";
         checkUpdateButton.AutoSize = true;
         checkUpdateButton.Click += async (_, _) =>
@@ -522,7 +574,7 @@ public class MainForm : Form
                 checkUpdateButton.Enabled = true;
             }
         };
-        settingsPanel.Controls.Add(checkUpdateButton, 1, 11);
+        settingsPanel.Controls.Add(checkUpdateButton, 1, 12);
         settingsPage.Controls.Add(settingsPanel);
 
         var urlListPage = new TabPage("🔗 URL Listesi") { Padding = new Padding(16) };
@@ -626,10 +678,12 @@ public class MainForm : Form
             LoadTimingSettings();
             LoadGmailSettings();
             LoadSiteLoginSettings();
+            LoadTelegramSettings();
             LoadUrlList();
             LoadTemplate();
             LoadActionTemplates();
             LoadLoginTemplates();
+            LoadTournamentTemplate();
             ScanWindows();
             await UpdateService.CheckForUpdatesAsync(
                 this,
@@ -644,6 +698,7 @@ public class MainForm : Form
             fullscreenButtonTemplate?.Dispose();
             homeLoginButtonTemplate?.Dispose();
             loginSubmitButtonTemplate?.Dispose();
+            tournamentButtonTemplate?.Dispose();
             DisposeActionTemplates();
         };
     }
@@ -705,6 +760,30 @@ public class MainForm : Form
         catch (Exception ex)
         {
             ShowWarning("Site giriş bilgileri kaydedilemedi: " + ex.Message);
+        }
+    }
+
+    void LoadTelegramSettings()
+    {
+        TelegramSettings settings = telegramSettingsService.Load();
+        telegramTokenBox.Text = settings.BotToken;
+        telegramChatIdBox.Text = settings.ChatId;
+    }
+
+    void SaveTelegramSettings()
+    {
+        try
+        {
+            telegramSettingsService.Save(new TelegramSettings
+            {
+                BotToken = telegramTokenBox.Text,
+                ChatId = telegramChatIdBox.Text
+            });
+            ShowInfo("Telegram ayarları bu Windows kullanıcısı için şifreli olarak kaydedildi.");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Telegram ayarları kaydedilemedi: " + ex.Message);
         }
     }
 
@@ -829,7 +908,7 @@ public class MainForm : Form
         }
     }
 
-    async Task FillGmailCodeIntoOpenScreenAsync(bool waitForVerificationScreen = false)
+    async Task<bool> FillGmailCodeIntoOpenScreenAsync(bool waitForVerificationScreen = false, bool reloadUrlsAfterLogin = true)
     {
         fillGmailCodeButton.Enabled = false;
         try
@@ -885,7 +964,8 @@ public class MainForm : Form
                     lastLoginWindowRefreshUtc = DateTime.UtcNow;
                     loginWindowMonitorTimer.Start();
                     ShowInfo($"Giriş doğrulandı. Kod {attempt}. denemede kabul edildi.");
-                    await ReloadUrlsAndPerformActionsAsync();
+                    if (reloadUrlsAfterLogin)
+                        await ReloadUrlsAndPerformActionsAsync();
                     break;
                 }
 
@@ -895,10 +975,12 @@ public class MainForm : Form
 
             if (!loggedIn)
                 ShowWarning("4 denemeden sonra giriş yapılamadı. Chrome penceresini ve doğrulama e-postasını kontrol edin.");
+            return loggedIn;
         }
         catch (Exception ex)
         {
             ShowWarning("Doğrulama kodu ekrana yazılamadı: " + ex.Message);
+            return false;
         }
         finally
         {
@@ -1022,6 +1104,58 @@ public class MainForm : Form
     string HomeLoginTemplateSettingsPath => AppDataPaths.GetDataFilePath("home_login_button_settings.json");
     string LoginSubmitTemplateFilePath => AppDataPaths.GetDataFilePath("login_submit_button.png");
     string LoginFormTemplateSettingsPath => AppDataPaths.GetDataFilePath("login_form_settings.json");
+    string TournamentTemplateFilePath => AppDataPaths.GetDataFilePath("tournament_cup.png");
+    string TournamentTemplateSettingsPath => AppDataPaths.GetDataFilePath("tournament_cup_settings.json");
+
+    void LoadTournamentTemplate()
+    {
+        tournamentButtonTemplate?.Dispose();
+        tournamentButtonTemplate = null;
+        tournamentTemplateDefinition = new();
+        try
+        {
+            if (File.Exists(TournamentTemplateSettingsPath))
+                tournamentTemplateDefinition = JsonSerializer.Deserialize<VisualTemplateDefinition>(
+                    File.ReadAllText(TournamentTemplateSettingsPath)) ?? new();
+            if (File.Exists(TournamentTemplateFilePath))
+            {
+                using var image = new Bitmap(TournamentTemplateFilePath);
+                tournamentButtonTemplate = BitmapConverter.ToMat(image);
+            }
+        }
+        catch
+        {
+            tournamentButtonTemplate?.Dispose();
+            tournamentButtonTemplate = null;
+        }
+        captureTournamentButton.Text = tournamentButtonTemplate == null
+            ? "KUPA GÖRSELİNİ KAYDET"
+            : "✓ KUPA GÖRSELİNİ DEĞİŞTİR";
+    }
+
+    void BeginCaptureTournamentTemplate()
+    {
+        if (scanCts != null) { ShowWarning("Önce çalışan taramayı F11 ile durdurun."); return; }
+        pendingTournamentTemplateCapture = true;
+        pendingHomeLoginTemplateCapture = false;
+        pendingLoginFormCaptureStep = 0;
+        status.Text = "Turnuva açıkken oyun içindeki KUPA simgesinin ortasına sol tıklayın. Bu tıklama siteye gönderilmeyecek.";
+    }
+
+    async Task CaptureTournamentTemplateAsync(int screenX, int screenY)
+    {
+        if (!TryFindWindowAt(screenX, screenY, out var target))
+        {
+            ShowWarning("Kupa simgesi bir Chrome penceresi üzerinde seçilmedi.");
+            return;
+        }
+        tournamentTemplateDefinition = await SaveTemplateAroundPointAsync(
+            target, screenX, screenY, TournamentTemplateFilePath);
+        File.WriteAllText(TournamentTemplateSettingsPath,
+            JsonSerializer.Serialize(tournamentTemplateDefinition, new JsonSerializerOptions { WriteIndented = true }));
+        LoadTournamentTemplate();
+        ShowInfo("Kupa görseli kaydedildi. Turnuva kontrolü bu görselle yapılacak.");
+    }
 
     void LoadLoginTemplates()
     {
@@ -1140,7 +1274,7 @@ public class MainForm : Form
         return new VisualTemplateDefinition { ClickOffsetX = screenX - left, ClickOffsetY = screenY - top };
     }
 
-    async Task StartAutomaticLoginAsync(ChromeWindow? forcedTarget = null)
+    async Task<bool> StartAutomaticLoginAsync(ChromeWindow? forcedTarget = null, bool reloadUrlsAfterLogin = true)
     {
         startAutomaticLoginButton.Enabled = false;
         try
@@ -1180,11 +1314,14 @@ public class MainForm : Form
             SendKeys.SendWait(credentials.Password);
             await ClickScreenPointAsync(formMatch.ScreenX, formMatch.ScreenY, CancellationToken.None);
             status.Text = "Giriş isteği gönderildi; doğrulama kodu ekranı bekleniyor...";
-            await FillGmailCodeIntoOpenScreenAsync(waitForVerificationScreen: true);
+            return await FillGmailCodeIntoOpenScreenAsync(
+                waitForVerificationScreen: true,
+                reloadUrlsAfterLogin: reloadUrlsAfterLogin);
         }
         catch (Exception ex)
         {
             ShowWarning("Otomatik giriş başlatılamadı: " + ex.Message);
+            return false;
         }
         finally { startAutomaticLoginButton.Enabled = true; }
     }
@@ -1234,6 +1371,98 @@ public class MainForm : Form
             loginWindowMonitorRunning = false;
             if (loginWindowHandle != IntPtr.Zero) loginWindowMonitorTimer.Start();
         }
+    }
+
+    async Task CheckTournamentStartAsync()
+    {
+        if (!TryGetSelectedWindow(out ChromeWindow selectedWindow, out int selectedIndex)) return;
+        if (tournamentButtonTemplate == null || tournamentButtonTemplate.Empty())
+        {
+            ShowWarning("Önce Ayarlar sekmesinden KUPA GÖRSELİNİ KAYDET düğmesiyle turnuva açıkken kupa simgesini kaydedin.");
+            return;
+        }
+
+        TelegramSettings telegram = new()
+        {
+            BotToken = telegramTokenBox.Text,
+            ChatId = telegramChatIdBox.Text
+        };
+        if (string.IsNullOrWhiteSpace(telegram.BotToken) || string.IsNullOrWhiteSpace(telegram.ChatId))
+        {
+            ShowWarning("Turnuva bildirimi için Ayarlar sekmesindeki Telegram bot tokeni ve sohbet kimliği doldurulmalı.");
+            return;
+        }
+
+        checkTournamentButton.Enabled = false;
+        try
+        {
+            telegramSettingsService.Save(telegram);
+            int windowNumber = selectedIndex + 1;
+            status.Text = $"Pencere {windowNumber}: sayfa yenileniyor...";
+            await ReloadChromeCurrentAddressAsync(selectedWindow, CancellationToken.None);
+            await Task.Delay(TimeSpan.FromSeconds(pageReloadWaitSeconds));
+
+            LoadLoginTemplates();
+            bool loginRequired = homeLoginButtonTemplate != null &&
+                FindVisualTemplate(selectedWindow, homeLoginButtonTemplate, homeLoginTemplateDefinition, .68, selectedWindow.Height).Found;
+            if (loginRequired)
+            {
+                status.Text = $"Pencere {windowNumber}: oturum kapalı, otomatik giriş başlatılıyor...";
+                bool loginSucceeded = await StartAutomaticLoginAsync(selectedWindow, reloadUrlsAfterLogin: false);
+                if (!loginSucceeded)
+                {
+                    await telegramService.SendMessageAsync(telegram.BotToken, telegram.ChatId,
+                        $"⚠️ Otobot: {windowNumber}. pencerede oturum açılamadı; turnuva kontrolü yapılamadı.",
+                        CancellationToken.None);
+                    return;
+                }
+            }
+
+            string savedUrl = GetSavedUrlForWindow(selectedIndex);
+            status.Text = $"Pencere {windowNumber}: kayıtlı oyun bağlantısı açılıyor...";
+            await NavigateChromeWindowAsync(selectedWindow, savedUrl);
+            await Task.Delay(TimeSpan.FromSeconds(pageReloadWaitSeconds));
+
+            status.Text = $"Pencere {windowNumber}: kupa simgesi kontrol ediliyor...";
+            var cupMatch = FindVisualTemplate(selectedWindow, tournamentButtonTemplate,
+                tournamentTemplateDefinition, .68, selectedWindow.Height);
+            bool started = cupMatch.Found;
+            string message = started
+                ? $"✅ Otobot: Turnuva başladı. ({windowNumber}. pencere)"
+                : $"ℹ️ Otobot: Turnuva başlamadı. ({windowNumber}. pencere)";
+            await telegramService.SendMessageAsync(telegram.BotToken, telegram.ChatId, message, CancellationToken.None);
+
+            ScanWindows();
+            int currentIndex = windows.FindIndex(window => window.Handle == selectedWindow.Handle);
+            if (currentIndex >= 0)
+                UpdateRow(currentIndex, started ? "TURNUVA BAŞLADI" : "TURNUVA BAŞLAMADI",
+                    cupMatch.Score, started ? Color.Honeydew : Color.Khaki);
+            ShowInfo(message + $" Eşleşme: {cupMatch.Score:P1}");
+        }
+        catch (Exception ex)
+        {
+            ShowWarning("Turnuva başlangıcı kontrol edilemedi: " + ex.Message);
+        }
+        finally
+        {
+            checkTournamentButton.Enabled = true;
+        }
+    }
+
+    string GetSavedUrlForWindow(int windowIndex)
+    {
+        UrlListSettings urlList = urlListService.Load();
+        if (!Uri.TryCreate(urlList.BaseAddress, UriKind.Absolute, out _))
+            throw new InvalidOperationException("URL Listesi'ndeki ana adres geçerli değil.");
+        List<string> urls = urlList.Remainders
+            .Where(remainder => !string.IsNullOrWhiteSpace(remainder))
+            .Select(remainder => urlList.BaseAddress.Trim().TrimEnd('/') +
+                (remainder.StartsWith('/') ? remainder : "/" + remainder))
+            .ToList();
+        if (windowIndex < 0 || windowIndex >= urls.Count)
+            throw new InvalidOperationException(
+                $"Seçilen pencere için kayıtlı URL bulunamadı. URL Listesi'nde {windowIndex + 1}. satırı doldurun.");
+        return urls[windowIndex];
     }
 
     async Task ReloadUrlsAndPerformActionsAsync()
@@ -2084,19 +2313,23 @@ public class MainForm : Form
         }
 
         if (nCode >= 0 && wParam == (IntPtr)WM_LBUTTONDOWN &&
-            (pendingHomeLoginTemplateCapture || pendingLoginFormCaptureStep > 0))
+            (pendingHomeLoginTemplateCapture || pendingLoginFormCaptureStep > 0 || pendingTournamentTemplateCapture))
         {
             var data = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             int x = data.pt.X;
             int y = data.pt.Y;
             bool captureHome = pendingHomeLoginTemplateCapture;
+            bool captureTournament = pendingTournamentTemplateCapture;
             int formStep = pendingLoginFormCaptureStep;
             pendingHomeLoginTemplateCapture = false;
+            pendingTournamentTemplateCapture = false;
             suppressActionCaptureMouseDown = true;
 
             BeginInvoke(new Action(async () =>
             {
-                if (captureHome)
+                if (captureTournament)
+                    await CaptureTournamentTemplateAsync(x, y);
+                else if (captureHome)
                     await CaptureHomeLoginTemplateAsync(x, y);
                 else
                     await CaptureLoginFormStepAsync(formStep, x, y);

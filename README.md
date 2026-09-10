@@ -1,14 +1,17 @@
 # Otobot
 
-## Telegram bağlantısı
+## Turnuva başlangıç bildirimi
 
-`Ayarlar > Telegram Rapor Ayarları` bölümünde BotFather tokeni maskeli alana girilir.
-`SOHBETİ BUL VE KAYDET` düğmesi, bota daha önce `/start` gönderen son sohbeti otomatik
-bulur. Token Windows kullanıcı hesabına bağlı DPAPI şifrelemesiyle yerel olarak saklanır;
-Git deposuna veya uygulama paketine eklenmez. `TEST MESAJI GÖNDER` bağlantıyı doğrular.
-Rapor penceresi tablodan seçilebilir. Otomatik rapor oyun tam ekranına geçip bakiye ile
-turnuva sıralamasındaki ilk 10 puanı sayısal olarak okur; önceki kayıtla farklarını Telegram'a
-tablo olarak gönderir. Rapor aralığı Ayarlar bölümünden değiştirilebilir.
+`Ayarlar > Turnuva Başlangıç Bildirimi` alanına BotFather tokeni ve Telegram sohbet kimliği
+girilir. Bilgiler yalnızca o Windows kullanıcısı için şifreli olarak saklanır; Git deposuna
+veya kurulum paketine eklenmez.
+
+Turnuva aktifken aynı ekran düzeninde `KUPA GÖRSELİNİ KAYDET` düğmesine basıp kupa
+simgesinin ortasına tıklayın. Ardından Pencereler sekmesinden hedef Chrome penceresini
+seçip `TURNUVA BAŞLANGICINI KONTROL ET` düğmesine basın. Otobot sayfayı yeniler,
+oturum kapalıysa otomatik giriş yapar, seçilen pencerenin URL Listesi'ndeki karşılığına
+geri döner ve kupa görselini arar. Sonuç Telegram'a `Turnuva başladı` veya
+`Turnuva başlamadı` olarak gönderilir.
 
 .NET 8 Windows Forms ile geliştirilmiş Chrome pencere izleme ve işlem otomasyonu.
 
